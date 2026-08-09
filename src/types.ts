@@ -1193,6 +1193,9 @@ export type ImageJob = {
   providerId: string;
   error: string | null;
   resultImageId: string | null;
+  completedImageCount?: number;
+  requestedImageCount?: number;
+  phase?: "generating" | "supplementing";
   clientRequestId?: string;
   branchId?: string;
   parentBranchId?: string;

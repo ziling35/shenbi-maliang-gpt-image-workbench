@@ -9,6 +9,9 @@ export type ImageJobEventPayload = {
   type?: "generation" | "edit" | string;
   resultImageId?: string | null;
   error?: string | null;
+  completedImageCount?: number;
+  requestedImageCount?: number;
+  phase?: "generating" | "supplementing";
   updatedAt: string;
 };
 

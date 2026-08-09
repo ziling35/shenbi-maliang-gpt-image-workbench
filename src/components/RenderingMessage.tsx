@@ -241,7 +241,7 @@ const drawRenderingDots = (
   }
 };
 
-export const RenderingMessage = memo(function RenderingMessage({ mode }: { mode: RenderingMode }) {
+export const RenderingMessage = memo(function RenderingMessage({ mode, completedImageCount, requestedImageCount, phase }: { mode: RenderingMode; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "supplementing" }) {
   const { t } = useI18n();
   const titles = useMemo(
     () => (mode === "edit" ? EDIT_LOADING_TITLE_KEYS : GENERATION_LOADING_TITLE_KEYS).map((key) => t(key)),
@@ -522,7 +522,7 @@ export const RenderingMessage = memo(function RenderingMessage({ mode }: { mode:
   return (
     <article className="message assistant-message rendering-message" aria-live="polite">
       <span key={`${mode}-${titleIndex}`} className={cx("rendering-title", titleSettled && "settled")}>
-        {titles[titleIndex] ?? titles[0]}
+        {phase === "supplementing" && completedImageCount && requestedImageCount ? `已生成 ${completedImageCount}/${requestedImageCount} 张，正在补齐剩余图片…` : titles[titleIndex] ?? titles[0]}
       </span>
       <div ref={cardRef} className={`rendering-card rendering-card-variant-${variant}`}>
         <div className="rendering-dot-field" aria-hidden="true">

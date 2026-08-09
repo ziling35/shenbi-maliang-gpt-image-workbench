@@ -158,7 +158,7 @@ function emitJobStatus(
   jobId: string,
   status: ImageJobEventStatus,
   type?: string,
-  details: { resultImageId?: string | null; error?: string | null } = {}
+  details: { resultImageId?: string | null; error?: string | null; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "supplementing" } = {}
 ) {
   const normalizedSessionId = String(sessionId ?? "").trim();
   if (!normalizedSessionId) return;
@@ -175,6 +175,9 @@ function emitJobStatus(
     type,
     ...(details.resultImageId !== undefined ? { resultImageId: details.resultImageId } : {}),
     ...(details.error !== undefined ? { error: details.error } : {}),
+    ...(details.completedImageCount !== undefined ? { completedImageCount: details.completedImageCount } : {}),
+    ...(details.requestedImageCount !== undefined ? { requestedImageCount: details.requestedImageCount } : {}),
+    ...(details.phase !== undefined ? { phase: details.phase } : {}),
     updatedAt: storedTimestamp || now()
   });
 }
@@ -494,6 +497,7 @@ async function saveProviderImagesWithRetry({
   jobId,
   retryCount: retryCountInput,
   onResponseJson,
+  onSavedImages,
   signal
 }: {
   providers: RuntimeProviderRow[];
@@ -504,6 +508,7 @@ async function saveProviderImagesWithRetry({
   jobId?: string;
   retryCount?: number;
   onResponseJson?: (responseJson: unknown) => void;
+  onSavedImages?: (input: { provider: RuntimeProviderRow; savedImages: Awaited<ReturnType<typeof saveProviderImageResults>>; completedImageCount: number; requestedImageCount: number; supplementing: boolean; attemptNo: number }) => Promise<void> | void;
   signal?: AbortSignal;
 }) {
   let firstError: unknown = null;
@@ -552,6 +557,7 @@ async function saveProviderImagesWithRetry({
       if (extraInitialImages.length > 0) {
         await deleteStoredFilesIfUnreferenced(extraInitialImages.map((image) => image.file.path));
       }
+      await onSavedImages?.({ provider, savedImages, completedImageCount: savedImages.length, requestedImageCount, supplementing: savedImages.length < requestedImageCount, attemptNo: attempt });
       const supplementPayload = singleImageSupplementPayload(requestPayload);
       const supplementBudget = supplementalImageRequestBudget(requestedImageCount, savedImages.length, retryCount);
       for (let supplementAttempt = 1; savedImages.length < requestedImageCount && supplementAttempt <= supplementBudget; supplementAttempt += 1) {
@@ -582,6 +588,10 @@ async function saveProviderImagesWithRetry({
           const extraImages = supplementalImages.slice(remainingCount);
           if (extraImages.length > 0) {
             await deleteStoredFilesIfUnreferenced(extraImages.map((image) => image.file.path));
+          }
+          const acceptedSupplementalImages = supplementalImages.slice(0, remainingCount);
+          if (acceptedSupplementalImages.length > 0) {
+            await onSavedImages?.({ provider, savedImages: acceptedSupplementalImages, completedImageCount: savedImages.length, requestedImageCount, supplementing: savedImages.length < requestedImageCount, attemptNo: attempt });
           }
         } catch (error) {
           if (providerRequestWasCancelled(error, signal)) {
@@ -2076,6 +2086,18 @@ api.post("/images/generate", async (c) => {
         promptHistory: [prompt],
         language: body.language
       });
+      const persistGeneratedImages = async (batch: Awaited<ReturnType<typeof saveProviderImageResults>>, batchProvider: RuntimeProviderRow, batchAttemptNo: number, completedImageCount: number, requestedImageCount: number, supplementing: boolean) => {
+        for (const saved of batch) {
+          assertImageJobExecutionIsActive(jobId, 0, 0);
+          const imageIndex = savedImageIds.length + 1;
+          run(appDb, `insert into images (id,user_id,session_id,job_id,path,prompt,kind,size,quality,provider_id,mime_type,parent_image_id,provider_file_id,provider_gen_id,provider_conversation_id,provider_parent_message_id,provider_source_account_id,image_width,image_height,image_file_size,generated_attempt_no,generated_by_retry,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, saved.id, user.id, sessionId, jobId, saved.file.path, prompt, "generation", size, quality, batchProvider.id, saved.file.mimeType, null, ...providerImageContextValues(saved.providerContext), saved.file.width, saved.file.height, saved.file.fileSize, batchAttemptNo, batchAttemptNo > 1 ? 1 : 0, now());
+          savedImageIds.push(saved.id);
+          insertMessage(user.id, sessionId, "assistant", "已生成图片", saved.id, { mode: "generation", jobId, n: imageCount, imageIndex, imageTotal: imageCount, ...revisionMetadata, ...branchMetadata });
+          run(appDb, "update image_jobs set result_image_id=coalesce(result_image_id,?),updated_at=? where id=? and status='running' and coalesce(manual_retry_count,0)=0 and coalesce(recovery_count,0)=0", saved.id, now(), jobId);
+          emitJobStatus(user.id, sessionId, jobId, "running", "generation", { resultImageId: saved.id, completedImageCount, requestedImageCount, phase: supplementing ? "supplementing" : "generating" });
+        }
+        if (batch.length > 0) invalidateLibraryFacetCache("images");
+      };
       const { provider: actualProvider, responseJson, savedImages, attemptNo, retryCount } = await saveProviderImagesWithRetry({
         providers,
         mode: "generation",
@@ -2084,12 +2106,13 @@ api.post("/images/generate", async (c) => {
         sessionId,
         jobId,
         retryCount: maxAutoRetries,
-        signal: executionController.signal
+        signal: executionController.signal,
+        onSavedImages: ({ provider, savedImages: batch, completedImageCount, requestedImageCount, supplementing, attemptNo: batchAttemptNo }) => persistGeneratedImages(batch, provider, batchAttemptNo, completedImageCount, requestedImageCount, supplementing)
       });
       await assertImageJobExecutionIsActiveAfterSave(jobId, 0, 0, savedImages);
       const autoRetryCount = Math.max(0, attemptNo - 1);
       const generatedByRetry = autoRetryCount > 0 ? 1 : 0;
-      for (const saved of savedImages) {
+      if (savedImageIds.length === 0) for (const saved of savedImages) {
         assertImageJobExecutionIsActive(jobId, 0, 0);
         const imageIndex = savedImageIds.length + 1;
         const createdAt = now();

@@ -1388,6 +1388,9 @@ export function WorkbenchShell({ user }: { user: User }) {
           status: payload.status,
           resultImageId: payload.resultImageId !== undefined ? payload.resultImageId : job.resultImageId,
           error: payload.error !== undefined ? payload.error : job.error,
+          completedImageCount: payload.completedImageCount !== undefined ? payload.completedImageCount : job.completedImageCount,
+          requestedImageCount: payload.requestedImageCount !== undefined ? payload.requestedImageCount : job.requestedImageCount,
+          phase: payload.phase !== undefined ? payload.phase : job.phase,
           updatedAt: payload.updatedAt
         };
       });
@@ -1425,9 +1428,11 @@ export function WorkbenchShell({ user }: { user: User }) {
     if (!updatedJobCache) {
       queryClient.invalidateQueries({ queryKey: ["session-image-jobs", sessionId] });
     }
-    if (payload.status !== "running") {
+    if (payload.status !== "running" || payload.resultImageId) {
       queryClient.invalidateQueries({ queryKey: ["messages", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["images"] });
+    }
+    if (payload.status !== "running") {
       queryClient.invalidateQueries({ queryKey: ["cases"] });
     }
   }, [

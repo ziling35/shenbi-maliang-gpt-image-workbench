@@ -56,6 +56,7 @@ export function useChatViewState({
     loadingTitle,
     messageList,
     visibleLoadingMode,
+    visibleRunningImageJob: visibleRunningImageJobs[0] ?? null,
     visiblePendingUserMessage
   };
 }

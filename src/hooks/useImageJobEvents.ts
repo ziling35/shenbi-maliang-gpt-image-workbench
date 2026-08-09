@@ -7,6 +7,9 @@ export type ImageJobEventPayload = {
   type?: "generation" | "edit" | string;
   resultImageId?: string | null;
   error?: string | null;
+  completedImageCount?: number;
+  requestedImageCount?: number;
+  phase?: "generating" | "supplementing";
   updatedAt: string;
 };
 
@@ -60,6 +63,8 @@ function isImageJobEventPayload(value: unknown): value is ImageJobEventPayload {
     && typeof record.sessionId === "string"
     && (record.status === "running" || record.status === "succeeded" || record.status === "failed" || record.status === "cancelled")
     && typeof record.updatedAt === "string"
+    && (record.completedImageCount === undefined || typeof record.completedImageCount === "number")
+    && (record.requestedImageCount === undefined || typeof record.requestedImageCount === "number")
   );
 }
 

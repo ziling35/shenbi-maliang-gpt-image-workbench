@@ -1523,7 +1523,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     [serverMessages]
   );
   const selectedBranchId = activeBranchId ?? serverRenderState.activeBranchId;
-  const { currentViewSubmitting, loadingTitle, messageList, visibleLoadingMode, visiblePendingUserMessage } = useChatViewState({
+  const { currentViewSubmitting, loadingTitle, messageList, visibleLoadingMode, visibleRunningImageJob, visiblePendingUserMessage } = useChatViewState({
     currentScopeBusy,
     currentScopeSubmitting,
     currentSubmitScope,
@@ -2278,7 +2278,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         />
         {visibleLoadingMode ? (
           <div ref={loadingMessageRef} className="message-enter-row loading-message-anchor" style={messageRevealStyle(renderItems.length)}>
-            <RenderingMessage mode={visibleLoadingMode} />
+            <RenderingMessage mode={visibleLoadingMode} completedImageCount={visibleRunningImageJob?.completedImageCount} requestedImageCount={visibleRunningImageJob?.requestedImageCount} phase={visibleRunningImageJob?.phase} />
           </div>
         ) : latestVisibleFailedJob ? (
           <div className="message-enter-row" style={messageRevealStyle(renderItems.length)}>
