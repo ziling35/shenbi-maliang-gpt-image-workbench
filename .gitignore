@@ -10,6 +10,7 @@ release/
 release-bin/
 repo-src-full/
 .trae/
+.codex/
 docs/image-routing-chains.md
 
 .env

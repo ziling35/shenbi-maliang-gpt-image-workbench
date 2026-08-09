@@ -28,3 +28,5 @@ Open `http://127.0.0.1:8787` for the main app and `http://127.0.0.1:8787/config`
 ## Pull Requests
 
 Include a short description of the change, the behavior it affects, and the checks you ran.
+
+See `docs/upstream-maintenance.md` for branch conventions and the upstream synchronization workflow used by this independently maintained repository.
