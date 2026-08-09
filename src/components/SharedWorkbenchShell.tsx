@@ -156,6 +156,8 @@ export function SharedWorkbenchShell() {
           <button className="guest-login-dialog-close" type="button" onClick={closeLogin} aria-label={t("sidebar.closeMenu")}>
             <X size={20} />
           </button>
+          <div className="guest-login-dialog-card">
+            <h2>{t("login.login")}</h2>
           <LoginPage
             className="guest-login-page"
             onClose={closeLogin}
@@ -165,6 +167,7 @@ export function SharedWorkbenchShell() {
               if (nextPath) navigate(nextPath, { replace: true });
             }}
           />
+          </div>
         </div>
       ) : null}
     </div>

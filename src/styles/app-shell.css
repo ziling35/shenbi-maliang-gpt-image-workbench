@@ -1182,6 +1182,77 @@
   backdrop-filter: blur(8px);
 }
 
+.guest-login-dialog-card {
+  position: relative;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid var(--app-border);
+  border-radius: 24px;
+  background: var(--app-surface);
+  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.24);
+}
+
+.guest-login-dialog-card h2 {
+  margin: 0;
+  padding: 28px 32px 0;
+  color: var(--app-text);
+  font-size: 22px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.login-page.guest-login-page {
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  display: block;
+  padding: 24px 32px 32px;
+  overflow: visible;
+  background: transparent;
+}
+
+.guest-login-page::before,
+.guest-login-page .login-background-layer,
+.guest-login-page .login-preload-layer,
+.guest-login-page .login-burn-layer,
+.guest-login-page .login-theme-switch,
+.guest-login-page .login-title-wrap {
+  display: none;
+}
+
+.guest-login-page .login-side {
+  width: 100%;
+  min-height: 0;
+  display: block;
+}
+
+.guest-login-page .login-panel {
+  width: 100%;
+  padding: 0;
+}
+
+.guest-login-page .login-form {
+  gap: 16px;
+}
+
+.guest-login-page .login-input-shell,
+.guest-login-page .login-form-compact .login-input-shell {
+  min-height: 52px;
+  padding-left: 16px;
+}
+
+.guest-login-page .login-input-shell input,
+.guest-login-page .login-form-compact .login-input-shell input {
+  height: 50px;
+  line-height: 50px;
+}
+
+.guest-login-page .login-submit,
+.guest-login-page .login-form-compact .login-submit.primary-btn {
+  min-height: 52px;
+}
+
 .guest-login-dialog-close {
   position: absolute;
   top: 28px;
@@ -1216,9 +1287,16 @@
   }
 
   .guest-login-page {
-    min-height: calc(100vh - 24px);
-    height: calc(100vh - 24px);
+    padding: 20px 22px 24px;
+  }
+
+  .guest-login-dialog-card {
+    max-height: calc(100vh - 24px);
     border-radius: 18px;
+  }
+
+  .guest-login-dialog-card h2 {
+    padding: 24px 22px 0;
   }
 }
 
