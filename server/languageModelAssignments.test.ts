@@ -5,6 +5,7 @@ import {
   normalizeLanguageModelAssignmentsFromRows,
   resolveGlobalLanguageModelFromRows,
   resolveLanguageModelFromRows,
+  selectableLanguageModelProviderFromRows,
   type LanguageModelAssignmentRow
 } from "./languageModelAssignments";
 import type { PromptOptimizerProviderRow } from "./promptOptimizerRoutes";
@@ -118,6 +119,25 @@ describe("language model assignment resolution", () => {
 });
 
 describe("language model assignment validation", () => {
+  test("allows only models published by enabled providers", () => {
+    const selectableProviders = [
+      provider({ id: "enabled", name: "Enabled", model: "default-model", models_json: '["alternate-model","default-model"]' }),
+      provider({ id: "disabled", name: "Disabled", model: "disabled-model", enabled: 0 })
+    ];
+
+    expect(selectableLanguageModelProviderFromRows(selectableProviders, "enabled", "default-model")?.model).toBe("default-model");
+    expect(selectableLanguageModelProviderFromRows(selectableProviders, "enabled", "alternate-model")?.model).toBe("alternate-model");
+    expect(selectableLanguageModelProviderFromRows(selectableProviders, "enabled", "unknown-model")).toBeNull();
+    expect(selectableLanguageModelProviderFromRows(selectableProviders, "disabled", "disabled-model")).toBeNull();
+    expect(selectableLanguageModelProviderFromRows(selectableProviders, "missing", "default-model")).toBeNull();
+  });
+
+  test("ignores invalid provider model catalogs", () => {
+    const invalidCatalogProvider = provider({ id: "invalid", name: "Invalid", model: "default-model", models_json: "not-json" });
+    expect(selectableLanguageModelProviderFromRows([invalidCatalogProvider], "invalid", "default-model")?.model).toBe("default-model");
+    expect(selectableLanguageModelProviderFromRows([invalidCatalogProvider], "invalid", "alternate-model")).toBeNull();
+  });
+
   test("validates the selected global provider and keeps its model", () => {
     expect(normalizeLanguageModelDefaultFromRows(
       { providerId: "deepseek", model: "deepseek-v4-pro" },

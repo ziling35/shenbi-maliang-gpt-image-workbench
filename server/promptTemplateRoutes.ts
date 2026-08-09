@@ -15,7 +15,7 @@ import {
   promptOptimizerHeaders,
   type PromptOptimizerProviderRow
 } from "./promptOptimizerRoutes";
-import { resolveLanguageModelProvider } from "./languageModelAssignments";
+import { publicSelectableLanguageModels, resolveLanguageModelProvider, selectableLanguageModelProvider } from "./languageModelAssignments";
 import type { AssetRow } from "./types";
 import { readStoredFile } from "./secureFiles";
 import { mimeTypeFromPath } from "./imageFiles";
@@ -3718,7 +3718,15 @@ export function registerPromptTemplateRoutes(api: Hono) {
     const record = body as Record<string, unknown>;
     const prompt = String(record.prompt ?? record.text ?? "").trim();
     if (!prompt) return c.json({ error: "输入内容为空，请先输入提示词" }, 400);
-    const provider = resolveLanguageModelProvider("prompt.optimize");
+    const requestedProviderId = String(record.optimizerProviderId ?? "").trim();
+    const requestedModel = String(record.optimizerModel ?? "").trim();
+    if (Boolean(requestedProviderId) !== Boolean(requestedModel)) {
+      return c.json({ error: "请选择完整的提示词优化模型" }, 400);
+    }
+    const provider = requestedProviderId || requestedModel
+      ? selectableLanguageModelProvider(requestedProviderId, requestedModel)
+      : resolveLanguageModelProvider("prompt.optimize");
+    if ((requestedProviderId || requestedModel) && !provider) return c.json({ error: "选择的提示词优化模型不可用" }, 400);
     if (!provider) return c.json({ error: "请先在配置页启用提示词优化模型" }, 400);
     const styleGroups = userPreferences(user.id).promptOptimizeStyleGroups;
     const optimizeStyle = normalizePromptOptimizeStyle(record.optimizeStyle, styleGroups);
@@ -3741,6 +3749,16 @@ export function registerPromptTemplateRoutes(api: Hono) {
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : "提示词优化失败" }, 502);
     }
+  });
+
+  api.get("/prompt-optimizer/models", async (c) => {
+    const user = await requireUser(c);
+    if (!user) return c.json({ error: "未登录" }, 401);
+    const resolved = resolveLanguageModelProvider("prompt.optimize");
+    return c.json({
+      defaultSelection: resolved ? { providerId: resolved.id, providerName: resolved.name, model: resolved.model } : null,
+      providers: publicSelectableLanguageModels()
+    });
   });
 
   api.patch("/prompt-templates/:id", async (c) => {

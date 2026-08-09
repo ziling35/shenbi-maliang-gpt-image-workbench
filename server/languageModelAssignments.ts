@@ -108,6 +108,44 @@ export function resolveLanguageModelProvider(usageKey: LanguageModelUsageKey) {
   return resolveLanguageModelFromRows(providers, assignment, globalAssignment).provider;
 }
 
+function providerModelNames(provider: PromptOptimizerProviderRow) {
+  let parsed: unknown = [];
+  try {
+    parsed = JSON.parse(provider.models_json || "[]");
+  } catch {
+    parsed = [];
+  }
+  return Array.from(new Set(
+    [provider.model, ...(Array.isArray(parsed) ? parsed : [])]
+      .map((item) => String(item ?? "").trim())
+      .filter(Boolean)
+  ));
+}
+
+export function selectableLanguageModelProviderFromRows(
+  providers: PromptOptimizerProviderRow[],
+  providerId: unknown,
+  model: unknown
+) {
+  const normalizedProviderId = String(providerId ?? "").trim();
+  const normalizedModel = String(model ?? "").trim();
+  if (!normalizedProviderId || !normalizedModel) return null;
+  const provider = providers.find((item) => item.id === normalizedProviderId && Boolean(item.enabled));
+  if (!provider) return null;
+  return providerModelNames(provider).includes(normalizedModel) ? { ...provider, model: normalizedModel } : null;
+}
+
+export function selectableLanguageModelProvider(providerId: unknown, model: unknown) {
+  return selectableLanguageModelProviderFromRows(orderedLanguageModelProviders(), providerId, model);
+}
+
+export function publicSelectableLanguageModels() {
+  return orderedLanguageModelProviders()
+    .filter((provider) => Boolean(provider.enabled))
+    .map((provider) => ({ providerId: provider.id, providerName: provider.name, models: providerModelNames(provider) }))
+    .filter((provider) => provider.models.length > 0);
+}
+
 function publicLanguageModelAssignments() {
   const providers = orderedLanguageModelProviders();
   const assignmentByUsageKey = new Map(languageModelAssignmentRows().map((row) => [row.usage_key, row]));

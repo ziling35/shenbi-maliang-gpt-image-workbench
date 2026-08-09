@@ -580,6 +580,8 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   }, [savePromptOptimizeCustomInstruction]);
 
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providers });
+  const promptOptimizerModels = useQuery({ queryKey: ["prompt-optimizer-models"], queryFn: api.promptOptimizerModels });
+  const billingAccount = useQuery({ queryKey: ["billing-account"], queryFn: api.billingAccount });
   const branding = useQuery({ queryKey: ["branding"], queryFn: api.branding });
   const aiClientInstallEnabled = branding.data?.showAiClientInstallEntry ?? true;
   const assetCategories = useQuery({ queryKey: ["asset-categories"], queryFn: api.assetCategories, enabled: Boolean(assetTarget) });
@@ -646,7 +648,17 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   const providerOptions = providers.data?.providers ?? [];
   const assetCategoryList = assetCategories.data?.categories ?? [];
   const assetReviewEnabled = assetCategories.data?.reviewEnabled ?? true;
-  const { currentProvider, providerId, quality, qualityOptions, setQuality, setSize, size, sizeOptions } = useImageProviderSelection(providerOptions);
+  const { currentProvider, providerId, quality, qualityOptions, setProviderId, setQuality, setSize, size, sizeOptions } = useImageProviderSelection(providerOptions);
+  const imageModelOptions = useMemo(() => providerOptions.map((provider) => ({
+    value: provider.id,
+    label: provider.virtual ? provider.name : provider.model,
+    description: provider.virtual ? "根据后台路由自动选择" : provider.name,
+    group: provider.virtual ? "自动" : provider.channel === "api" ? "API" : provider.channel === "cpa" ? "CPA" : "ChatGPT Web"
+  })), [providerOptions]);
+  const currentModelPriceCents = currentProvider?.virtual ? null : billingAccount.data?.prices.find((price) => price.model === currentProvider?.model)?.price_cents ?? null;
+  const estimatedCostLabel = currentModelPriceCents === null
+    ? currentProvider?.virtual ? "费用按实际路由模型结算" : "该模型尚未配置价格"
+    : `预计扣费 ¥${((currentModelPriceCents * imageCount) / 100).toFixed(2)}`;
   const composerScopeKey = sessionId ? `session:${sessionId}` : COMPOSER_NEW_DRAFT_SCOPE_KEY;
   const composerInstanceKey = sessionId ? composerScopeKey : `${COMPOSER_NEW_DRAFT_SCOPE_KEY}:${newChatResetKey}`;
   const currentComposerDraft = composerDrafts[composerScopeKey] ?? null;
@@ -2379,6 +2391,10 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         placeholder={composerPlaceholder}
         previews={composerPreviews}
         imageCount={imageCount}
+        imageModelOptions={imageModelOptions}
+        imageModelValue={providerId}
+        estimatedCostLabel={estimatedCostLabel}
+        promptOptimizerModels={promptOptimizerModels.data}
         promptColorSchemes={promptColorSchemeList}
         promptColorSchemeIds={currentPromptColorSchemeIds}
         promptColorSchemeInjection={currentPromptColorSchemeInjection}
@@ -2398,6 +2414,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         onCancel={currentCancelTarget ? cancelCurrentSubmit : undefined}
         onDraftPromptChange={setDraftPrompt}
         onImageCountChange={setImageCount}
+        onImageModelChange={setProviderId}
         onPaste={handleComposerPaste}
         onQualityChange={setQuality}
         onSelectedAssetsChange={setSelectedAssets}

@@ -7,7 +7,7 @@ import { CheckerboardImage } from "../CheckerboardImage";
 import { PromptColorSchemeSelect } from "../PromptColorSchemeSelect";
 import { PromptOptimizeStyleSelect } from "../PromptOptimizeStyleSelect";
 import { PromptTemplateComposerPanel } from "./PromptTemplateComposerPanel";
-import { api, type PromptColorScheme, type PromptTemplateOptimizeStyle } from "../../api";
+import { api, type PromptColorScheme, type PromptTemplateOptimizeStyle, type PromptOptimizerModelCatalog } from "../../api";
 import { cx } from "../../lib/cx";
 import {
   applyPromptColorSchemeInjection,
@@ -29,6 +29,7 @@ import type { QualityOption, SizeOption } from "../../lib/imageOptions";
 import type { ComposerPromptTemplateDraft, ComposerPromptTemplatePanelDraft } from "../../store/workbench";
 import type { AssetItem, CaseMaterialItem, ImageEditSuggestion } from "../../types";
 import { useToast } from "../../ui";
+import { ModelPicker, type ModelPickerOption } from "../ModelPicker";
 
 type QuickMenuSource = "plus" | "slash";
 const QUICK_MENU_ITEM_COUNT = 3;
@@ -57,6 +58,10 @@ type ChatComposerProps = {
   placeholder: string;
   previews: ChatComposerPreview[];
   imageCount: number;
+  imageModelOptions: ModelPickerOption[];
+  imageModelValue: string;
+  estimatedCostLabel?: string;
+  promptOptimizerModels?: PromptOptimizerModelCatalog;
   promptColorSchemes: PromptColorScheme[];
   promptColorSchemeIds: string[];
   promptColorSchemeInjection?: string;
@@ -76,6 +81,7 @@ type ChatComposerProps = {
   onApplyEditSuggestion?: (suggestion: ImageEditSuggestion) => void;
   onAutoOptimizePromptRequestHandled?: (id: number) => void;
   onImageCountChange: (value: number) => void;
+  onImageModelChange: (value: string) => void;
   onPaste: ClipboardEventHandler<HTMLTextAreaElement>;
   onQualityChange: (value: string) => void;
   onSelectedAssetsChange: (assets: AssetItem[]) => void;
@@ -146,6 +152,10 @@ export function ChatComposer({
   placeholder,
   previews,
   imageCount,
+  imageModelOptions,
+  imageModelValue,
+  estimatedCostLabel,
+  promptOptimizerModels,
   promptColorSchemes,
   promptColorSchemeIds,
   promptColorSchemeInjection = "",
@@ -165,6 +175,7 @@ export function ChatComposer({
   onApplyEditSuggestion,
   onAutoOptimizePromptRequestHandled,
   onImageCountChange,
+  onImageModelChange,
   onPaste,
   onQualityChange,
   onSelectedAssetsChange,
@@ -193,6 +204,7 @@ export function ChatComposer({
   const [promptTemplateActionSlot, setPromptTemplateActionSlot] = useState<HTMLSpanElement | null>(null);
   const [promptTemplateOptimizeControlVisible, setPromptTemplateOptimizeControlVisible] = useState(false);
   const [promptInputOptimizePending, setPromptInputOptimizePending] = useState(false);
+  const [promptOptimizerModelValue, setPromptOptimizerModelValue] = useState(() => window.localStorage.getItem("gpt-image.prompt-optimizer-model") ?? "system");
   const [promptInputOptimizeStreaming, setPromptInputOptimizeStreaming] = useState(false);
   const [promptInputCustomInstruction, setPromptInputCustomInstruction] = useState(promptOptimizeCustomInstruction);
   const [promptBeforeInputOptimize, setPromptBeforeInputOptimize] = useState("");
@@ -213,6 +225,15 @@ export function ChatComposer({
   ), [draftCaseUsage]);
   const lastDraftCaseUsageKeyRef = useRef(draftCaseUsageKey);
   const promptOptimizationLoading = promptTemplateLoading || promptInputOptimizePending;
+  const promptOptimizerModelOptions = useMemo<ModelPickerOption[]>(() => [
+    { value: "system", label: "跟随系统", description: promptOptimizerModels?.defaultSelection ? `${promptOptimizerModels.defaultSelection.providerName} · ${promptOptimizerModels.defaultSelection.model}` : "使用管理员默认配置" },
+    ...(promptOptimizerModels?.providers.flatMap((provider) => provider.models.map((model) => ({ value: `${provider.providerId}\u0000${model}`, label: model, description: provider.providerName, group: provider.providerName }))) ?? [])
+  ], [promptOptimizerModels]);
+  useEffect(() => {
+    if (promptOptimizerModelOptions.some((option) => option.value === promptOptimizerModelValue)) return;
+    setPromptOptimizerModelValue("system");
+    window.localStorage.setItem("gpt-image.prompt-optimizer-model", "system");
+  }, [promptOptimizerModelOptions, promptOptimizerModelValue]);
   const promptTextareaLoading = (promptTemplateLoading && !promptTemplateStreaming) || (promptInputOptimizePending && !promptInputOptimizeStreaming);
   const optimizeStyleOption = promptOptimizeStyleOption(promptInputOptimizeStyle, promptOptimizeStyleGroups);
   const normalizedPromptColorSchemeIds = normalizePromptColorSchemeIds(promptColorSchemeIds, promptColorSchemes).slice(0, 1);
@@ -576,6 +597,7 @@ export function ChatComposer({
           optimizeStyle: nextOptimizeStyle,
           imageCount: optimizeImageCount,
           customInstruction: customInstructionOverride
+          ,...(promptOptimizerModelValue === "system" ? {} : (() => { const [optimizerProviderId, optimizerModel] = promptOptimizerModelValue.split("\u0000"); return { optimizerProviderId, optimizerModel }; })())
         },
         {
           onDelta: (chunk) => {
@@ -900,6 +922,7 @@ export function ChatComposer({
               </div>
             ) : null}
           </div>
+          <ModelPicker value={imageModelValue} options={imageModelOptions} onChange={onImageModelChange} kind="image" />
           <SizePicker value={size} options={sizeOptions} onChange={onSizeChange} />
           <QualityPicker value={quality} options={qualityOptions} onChange={onQualityChange} />
           <ImageCountStepper value={imageCount} onChange={onImageCountChange} />
@@ -967,6 +990,7 @@ export function ChatComposer({
                       menuWidth={260}
                     />
                   </span>
+                  <ModelPicker value={promptOptimizerModelValue} options={promptOptimizerModelOptions} onChange={(value) => { setPromptOptimizerModelValue(value); window.localStorage.setItem("gpt-image.prompt-optimizer-model", value); }} kind="prompt" disabled={promptInputOptimizePending} />
                 </div>
                 <button
                   type="button"
@@ -982,8 +1006,9 @@ export function ChatComposer({
                   <BrushCleaning size={15} />
                 </button>
               </>
-            ) : null}
+              ) : null}
           </span>
+          {estimatedCostLabel ? <span className="composer-estimated-cost">{estimatedCostLabel}</span> : null}
           <span className="composer-action-spacer" />
           {busy && onCancel ? (
             <button

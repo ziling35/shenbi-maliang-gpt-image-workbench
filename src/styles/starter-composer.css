@@ -1255,6 +1255,39 @@
   min-width: 10px;
 }
 
+.composer-model-select {
+  flex: 0 1 156px;
+  min-width: 116px;
+  max-width: 180px;
+}
+
+.composer-model-select .custom-select-trigger {
+  width: 100%;
+  min-height: 36px;
+  height: 36px;
+  border-radius: 999px;
+  padding-inline: 10px 8px;
+}
+
+.composer-model-select .custom-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-model-menu {
+  max-width: calc(100vw - 24px);
+}
+
+.composer-estimated-cost {
+  flex: 0 0 auto;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
 .composer-tool-btn {
   position: relative;
   width: 36px;
@@ -2251,6 +2284,18 @@
 
   .composer-actions > .send-btn {
     margin-left: auto;
+  }
+
+  .composer-model-select {
+    flex-basis: 142px;
+    max-width: min(142px, calc(100vw - 24px));
+  }
+
+  .composer-estimated-cost {
+    order: 20;
+    max-width: calc(100% - 48px);
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .composer-quick-menu {

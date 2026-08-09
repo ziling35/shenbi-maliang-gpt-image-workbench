@@ -16,5 +16,6 @@ export {
   type PromptTextOptimizePayload,
   type PromptTextOptimizeResponse,
   type PromptTemplatePayload,
-  type PromptReferenceLinkPayload
+  type PromptReferenceLinkPayload,
+  type PromptOptimizerModelCatalog
 } from "./api/workbench";
