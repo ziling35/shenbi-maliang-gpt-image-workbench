@@ -11,6 +11,7 @@ import {
   type PromptOptimizerProviderRow
 } from "./promptOptimizerRoutes";
 import { resolveLanguageModelProvider, type LanguageModelUsageKey } from "./languageModelAssignments";
+import { PromptModelTransportError, requestPromptProviderText } from "./promptModelTransport";
 import {
   starterCopyRequestError,
   starterCopyRequestTimeoutMs,
@@ -308,8 +309,8 @@ async function requestPromptModelText(
   usageKey: Extract<LanguageModelUsageKey, "starter.copy.generate" | "starter.copy.translate">
 ) {
   const envKey = String(provider.api_key_env ?? "").trim();
-  const endpoint = normalizePath(provider.base_url, provider.endpoint_path || "/chat/completions");
-  const streamEnabled = Boolean(provider.stream_enabled);
+  let endpoint = normalizePath(provider.base_url, provider.endpoint_path || "/chat/completions");
+  let streamEnabled = Boolean(provider.stream_enabled);
   const maxTokens = Math.trunc(Number(provider.max_tokens ?? 0));
   const requestBody: Record<string, unknown> = {
     model: provider.model,
@@ -330,48 +331,17 @@ async function requestPromptModelText(
     if (!promptOptimizerApiKey(provider)) {
       throw new Error(`提示词优化模型「${provider.name}」缺少 API Key，请在配置页填写密钥或环境变量 ${envKey || "API_KEY"}`);
     }
-    const response = await fetchPromptOptimizerWithRetry(provider, endpoint, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        ...promptOptimizerHeaders(provider, streamEnabled ? "text/event-stream" : "application/json"),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody)
-    }, {
-      onAttempt: (attemptNo) => {
-        attemptCount = attemptNo;
-      }
+    const result = await requestPromptProviderText({
+      provider,
+      messages,
+      temperature: provider.temperature == null ? 0.86 : Number(provider.temperature),
+      signal: controller.signal
     });
-    statusCode = response.status;
-    if (!response.ok) {
-      const text = await response.text();
-      const data = safeJson<Record<string, unknown>>(text, {});
-      const nestedError = data.error && typeof data.error === "object" ? data.error as Record<string, unknown> : null;
-      throw new Error(String(nestedError?.message ?? data.message ?? text ?? response.statusText).trim() || "每日文案模型请求失败");
-    }
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    if (streamEnabled && contentType.includes("text/event-stream")) {
-      const content = await readStreamingChatCompletion(response);
-      logModelRequest({
-        purpose: "starter.copy",
-        providerId: provider.id,
-        providerName: provider.name,
-        model: provider.model,
-        endpoint,
-        method: "POST",
-        streamEnabled,
-        retryCount: normalizePromptOptimizerRetryCount(provider.retry_count),
-        attemptCount,
-        statusCode,
-        durationMs: Date.now() - startedAt,
-        success: true,
-        source: usageKey
-      });
-      return content;
-    }
-    const text = await response.text();
-    const content = chatCompletionContent(safeJson<unknown>(text, null), text);
+    endpoint = result.endpoint;
+    streamEnabled = result.streamEnabled;
+    attemptCount = result.attemptCount;
+    statusCode = result.statusCode;
+    const content = result.content;
     logModelRequest({
       purpose: "starter.copy",
       providerId: provider.id,
@@ -389,6 +359,12 @@ async function requestPromptModelText(
     });
     return content;
   } catch (error) {
+    if (error instanceof PromptModelTransportError) {
+      endpoint = error.endpoint;
+      streamEnabled = error.streamEnabled;
+      attemptCount = error.attemptCount;
+      statusCode = error.statusCode;
+    }
     const requestError = starterCopyRequestError(error, controller.signal.aborted, requestTimeoutMs);
     logModelRequest({
       purpose: "starter.copy",

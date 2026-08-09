@@ -8,6 +8,11 @@ import {
 import { logModelRequest } from "./auditLog";
 import { captureTextModelCharge, refundTextModelCharge, reserveTextModelCharge } from "./billing";
 import { resolveLanguageModelProvider, type LanguageModelUsageKey } from "./languageModelAssignments";
+import {
+  PromptModelTransportError,
+  promptModelRequestError,
+  requestPromptProviderText
+} from "./promptModelTransport";
 import type { EditSuggestionTone } from "./userPreferences";
 import { normalizePath, safeJson } from "./utils";
 import { DEFAULT_LOCALE, LOCALE_CODES, type LocaleCode } from "../src/i18n/locales";
@@ -518,8 +523,8 @@ async function requestPromptModelText(
   timeoutMs = PROMPT_TITLE_TIMEOUT_MS,
   logContext?: ModelRequestLogContext
 ) {
-  const endpoint = normalizePath(provider.base_url, provider.endpoint_path || "/chat/completions");
-  const streamEnabled = Boolean(provider.stream_enabled);
+  let endpoint = normalizePath(provider.base_url, provider.endpoint_path || "/chat/completions");
+  let streamEnabled = Boolean(provider.stream_enabled);
   const maxTokens = Math.trunc(Number(provider.max_tokens ?? 0));
   const requestBody: Record<string, unknown> = {
     model: provider.model,
@@ -540,35 +545,12 @@ async function requestPromptModelText(
   try {
     if (!promptOptimizerApiKey(provider)) throw new Error(`提示词优化模型「${provider.name}」缺少 API Key`);
     if (logContext?.userId) textChargeId = reserveTextModelCharge(logContext.userId, provider.model, logContext.source || logContext.purpose, logContext.jobId);
-    const response = await fetchPromptOptimizerWithRetry(provider, endpoint, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        ...promptOptimizerHeaders(provider, streamEnabled ? "text/event-stream" : "application/json"),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody)
-    }, {
-      onAttempt: (attemptNo) => {
-        attemptCount = attemptNo;
-      }
-    });
-    statusCode = response.status;
-    if (!response.ok) {
-      const text = await response.text();
-      const data = safeJson<Record<string, unknown>>(text, {});
-      const nestedError = data.error && typeof data.error === "object" ? data.error as Record<string, unknown> : null;
-      throw new Error(String(nestedError?.message ?? data.message ?? text ?? response.statusText).trim() || "标题生成失败");
-    }
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    let content = "";
-    if (streamEnabled && contentType.includes("text/event-stream")) {
-      content = await readStreamingChatCompletion(response);
-    } else {
-      const text = await response.text();
-      content = chatCompletionContent(safeJson<unknown>(text, null), text);
-    }
-    if (!content.trim()) throw new Error("提示词模型没有返回内容");
+    const result = await requestPromptProviderText({ provider, messages, temperature, signal: controller.signal });
+    endpoint = result.endpoint;
+    streamEnabled = result.streamEnabled;
+    attemptCount = result.attemptCount;
+    statusCode = result.statusCode;
+    const content = result.content;
     captureTextModelCharge(textChargeId);
     if (logContext) {
       logModelRequest({
@@ -588,6 +570,13 @@ async function requestPromptModelText(
     }
     return content;
   } catch (error) {
+    if (error instanceof PromptModelTransportError) {
+      endpoint = error.endpoint;
+      streamEnabled = error.streamEnabled;
+      attemptCount = error.attemptCount;
+      statusCode = error.statusCode;
+    }
+    const requestError = promptModelRequestError(error, controller.signal.aborted, timeoutMs);
     refundTextModelCharge(textChargeId);
     if (logContext) {
       logModelRequest({
@@ -603,10 +592,10 @@ async function requestPromptModelText(
         statusCode,
         durationMs: Date.now() - startedAt,
         success: false,
-        error
+        error: requestError
       });
     }
-    throw error;
+    throw requestError;
   } finally {
     clearTimeout(timeoutId);
   }

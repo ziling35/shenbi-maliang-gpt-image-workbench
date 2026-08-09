@@ -17,6 +17,7 @@ import {
 } from "./promptOptimizerRoutes";
 import { publicSelectableLanguageModels, resolveLanguageModelProvider, selectableLanguageModelProvider } from "./languageModelAssignments";
 import { captureTextModelCharge, refundTextModelCharge, reserveTextModelCharge } from "./billing";
+import { PromptModelTransportError, requestPromptProviderText } from "./promptModelTransport";
 import type { AssetRow } from "./types";
 import { readStoredFile } from "./secureFiles";
 import { mimeTypeFromPath } from "./imageFiles";
@@ -1955,8 +1956,8 @@ async function requestPromptModelText({
   logContext: ModelRequestLogContext;
 }) {
   const envKey = String(provider.api_key_env ?? "").trim();
-  const endpoint = normalizePath(provider.base_url, provider.endpoint_path || "/chat/completions");
-  const streamEnabled = Boolean(provider.stream_enabled);
+  let endpoint = normalizePath(provider.base_url, provider.endpoint_path || "/chat/completions");
+  let streamEnabled = Boolean(provider.stream_enabled);
   const maxTokens = Math.trunc(Number(provider.max_tokens ?? 0));
   const requestBody: Record<string, unknown> = {
     model: provider.model,
@@ -1982,48 +1983,12 @@ async function requestPromptModelText({
       throw new Error(`提示词优化模型「${provider.name}」缺少 API Key，请在配置页填写密钥或环境变量 ${envKey || "API_KEY"}`);
     }
     if (logContext.userId) textChargeId = reserveTextModelCharge(logContext.userId, provider.model, logContext.source || logContext.purpose, logContext.jobId);
-    const response = await fetchPromptOptimizerWithRetry(provider, endpoint, {
-      method: "POST",
-      headers: {
-        ...promptOptimizerHeaders(provider, streamEnabled ? "text/event-stream" : "application/json"),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody)
-    }, {
-      onAttempt: (attemptNo) => {
-        attemptCount = attemptNo;
-      }
-    });
-    statusCode = response.status;
-    if (!response.ok) {
-      const text = await response.text();
-      let data: unknown = null;
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch {
-        data = null;
-      }
-      const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
-      const nestedError = record.error && typeof record.error === "object" ? record.error as Record<string, unknown> : null;
-      const message = String(nestedError?.message ?? record.message ?? text ?? response.statusText).trim();
-      throw new Error(message || "提示词模型请求失败");
-    }
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    let content = "";
-    if (streamEnabled && contentType.includes("text/event-stream")) {
-      content = await readStreamingChatCompletion(response, (delta, nextContent) => onContent?.(delta, nextContent));
-    } else {
-      const text = await response.text();
-      let data: unknown = null;
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch {
-        data = null;
-      }
-      content = chatCompletionContent(data, text);
-      if (content) onContent?.(content, content);
-    }
-    if (!content.trim()) throw new Error("提示词模型没有返回内容");
+    const result = await requestPromptProviderText({ provider, messages, temperature: resolvedTemperature, onContent });
+    endpoint = result.endpoint;
+    streamEnabled = result.streamEnabled;
+    attemptCount = result.attemptCount;
+    statusCode = result.statusCode;
+    const content = result.content;
     captureTextModelCharge(textChargeId);
     logModelRequest({
       ...logContext,
@@ -2041,6 +2006,12 @@ async function requestPromptModelText({
     });
     return content.trim();
   } catch (error) {
+    if (error instanceof PromptModelTransportError) {
+      endpoint = error.endpoint;
+      streamEnabled = error.streamEnabled;
+      attemptCount = error.attemptCount;
+      statusCode = error.statusCode;
+    }
     refundTextModelCharge(textChargeId);
     logModelRequest({
       ...logContext,
