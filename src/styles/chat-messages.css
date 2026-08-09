@@ -34,7 +34,7 @@
   min-width: 0;
   width: min(840px, 100%);
   margin: 0 auto;
-  padding: 36px 18px 180px;
+  padding: 36px 18px 220px;
 }
 
 .message-area-empty {
@@ -56,6 +56,31 @@
 
 .message-scroll-anchor {
   height: 1px;
+  scroll-margin-bottom: 210px;
+}
+
+.chat-page.has-edit-suggestions .message-area {
+  padding-bottom: 280px;
+}
+
+.chat-page.has-edit-suggestions .message-scroll-anchor {
+  scroll-margin-bottom: 260px;
+}
+
+.chat-page.has-composer-preview .message-area {
+  padding-bottom: 300px;
+}
+
+.chat-page.has-composer-preview .message-scroll-anchor {
+  scroll-margin-bottom: 280px;
+}
+
+.chat-page.has-composer-preview.has-edit-suggestions .message-area {
+  padding-bottom: 350px;
+}
+
+.chat-page.has-composer-preview.has-edit-suggestions .message-scroll-anchor {
+  scroll-margin-bottom: 330px;
 }
 
 .chat-page-top-actions {
