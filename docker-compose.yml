@@ -1,0 +1,23 @@
+services:
+  maliang:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: shenbi-maliang
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      APP_TRUST_PROXY: "true"
+    env_file:
+      - .env
+    ports:
+      - "${MALIANG_BIND_ADDRESS:-127.0.0.1}:${MALIANG_PORT:-8787}:8787"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "bun", "-e", "const response = await fetch('http://127.0.0.1:8787/api/health'); if (!response.ok) process.exit(1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

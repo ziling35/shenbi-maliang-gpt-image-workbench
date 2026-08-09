@@ -60,6 +60,8 @@ bun run start
 - 后台配置：http://127.0.0.1:8787/config
 - 健康检查：http://127.0.0.1:8787/api/health
 
+Docker 部署请查看 [Docker 部署说明](docs/deploy-docker.md)。
+
 开发调试时可以分别启动后端和前端：
 
 ```bash
