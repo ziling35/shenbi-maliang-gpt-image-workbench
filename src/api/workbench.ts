@@ -211,6 +211,8 @@ export type PromptTemplateOptimizePayload = {
   basePrompt: string;
   optimizeStyle?: PromptTemplateOptimizeStyle;
   customInstruction?: string;
+  optimizerProviderId?: string;
+  optimizerModel?: string;
 };
 export type PromptTextOptimizePayload = {
   prompt: string;
@@ -612,7 +614,7 @@ export type ExternalMcpConnection = {
 };
 
 export const api = {
-  promptOptimizerModels: () => request<PromptOptimizerModelCatalog>("/api/prompt-optimizer/models"),
+  promptOptimizerModels: (usage: "prompt.optimize" | "template.optimize" = "prompt.optimize") => request<PromptOptimizerModelCatalog>(`/api/prompt-optimizer/models?usage=${encodeURIComponent(usage)}`),
   billingAccount: () => request<{ balanceCents: number; payment: { enabled: boolean; paymentTypes: string[]; minimumRechargeCents: number }; prices: Array<{ model: string; price_cents: number }>; orders: Array<{ id: string; amount_cents: number; status: string; payment_type: string; created_at: string; paid_at: string | null }>; ledger: Array<{ id: string; type: string; amount_cents: number; balance_after_cents: number; description: string; created_at: string }> }>("/api/billing/account"),
   createRecharge: (payload: { amount: number; type: string }) => request<{ orderId: string; paymentUrl: string }>("/api/billing/recharge", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<{ user: User | null }>("/api/auth/me"),

@@ -580,7 +580,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   }, [savePromptOptimizeCustomInstruction]);
 
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providers });
-  const promptOptimizerModels = useQuery({ queryKey: ["prompt-optimizer-models"], queryFn: api.promptOptimizerModels });
+  const promptOptimizerModels = useQuery({ queryKey: ["prompt-optimizer-models", "prompt.optimize"], queryFn: () => api.promptOptimizerModels("prompt.optimize") });
   const billingAccount = useQuery({ queryKey: ["billing-account"], queryFn: api.billingAccount });
   const branding = useQuery({ queryKey: ["branding"], queryFn: api.branding });
   const aiClientInstallEnabled = branding.data?.showAiClientInstallEntry ?? true;

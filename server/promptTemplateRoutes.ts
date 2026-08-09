@@ -3754,7 +3754,8 @@ export function registerPromptTemplateRoutes(api: Hono) {
   api.get("/prompt-optimizer/models", async (c) => {
     const user = await requireUser(c);
     if (!user) return c.json({ error: "未登录" }, 401);
-    const resolved = resolveLanguageModelProvider("prompt.optimize");
+    const usageKey = c.req.query("usage") === "template.optimize" ? "template.optimize" : "prompt.optimize";
+    const resolved = resolveLanguageModelProvider(usageKey);
     return c.json({
       defaultSelection: resolved ? { providerId: resolved.id, providerName: resolved.name, model: resolved.model } : null,
       providers: publicSelectableLanguageModels()
@@ -4146,7 +4147,13 @@ export function registerPromptTemplateRoutes(api: Hono) {
     const language = "zh";
     const basePrompt = String(record.basePrompt ?? "").trim();
     if (!basePrompt) return c.json({ error: "基础提示词为空，请先填写表单内容" }, 400);
-    const provider = resolveLanguageModelProvider("template.optimize");
+    const requestedProviderId = String(record.optimizerProviderId ?? "").trim();
+    const requestedModel = String(record.optimizerModel ?? "").trim();
+    if (Boolean(requestedProviderId) !== Boolean(requestedModel)) return c.json({ error: "请选择完整的提示词优化模型" }, 400);
+    const provider = requestedProviderId || requestedModel
+      ? selectableLanguageModelProvider(requestedProviderId, requestedModel)
+      : resolveLanguageModelProvider("template.optimize");
+    if ((requestedProviderId || requestedModel) && !provider) return c.json({ error: "选择的提示词优化模型不可用" }, 400);
     if (!provider) return c.json({ error: "请先在配置页启用提示词优化模型" }, 400);
     const translationProvider = resolveLanguageModelProvider("template.translate");
     if (!translationProvider) return c.json({ error: "请先在配置页启用表单翻译模型" }, 400);

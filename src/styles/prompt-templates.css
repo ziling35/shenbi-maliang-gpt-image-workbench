@@ -2317,6 +2317,43 @@
   flex: 0 0 auto;
 }
 
+.prompt-template-model-select {
+  width: min(168px, 18vw);
+  min-width: 116px;
+  flex: 0 1 auto;
+}
+
+.result-block-action .result-block-action-group .prompt-template-model-select .custom-select-trigger {
+  width: 100%;
+  min-height: 36px;
+  height: 36px;
+  border: 0;
+  border-left: 1px solid var(--app-border);
+  border-radius: 0;
+  background: transparent;
+  padding: 0 9px;
+  font-size: 13px;
+}
+
+.result-block-action .result-block-action-group .prompt-template-model-select .custom-select-trigger:focus,
+.result-block-action .result-block-action-group .prompt-template-model-select .custom-select-trigger[aria-expanded="true"] {
+  border-color: var(--app-border);
+  background: var(--button-default-hover-bg);
+  box-shadow: none;
+}
+
+.prompt-template-model-select .custom-select-value,
+.prompt-template-model-select .custom-select-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-template-model-menu {
+  max-width: calc(100vw - 24px);
+}
+
 .result-block-action .result-block-action-group .prompt-optimize-style-select .custom-select-trigger {
   width: auto;
   min-height: 36px;

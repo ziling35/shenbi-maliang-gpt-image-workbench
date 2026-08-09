@@ -112,6 +112,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type PromptTemplateExportDownload, type PromptTemplateOptimizeStyle, type PromptTemplatePayload } from "../api";
+import { ModelPicker, type ModelPickerOption } from "../components/ModelPicker";
 import { PromptOptimizeStyleSelect } from "../components/PromptOptimizeStyleSelect";
 import { PromptTemplateColorPicker } from "../components/PromptTemplateColorPicker";
 import { SearchHistoryInput } from "../components/SearchHistoryInput";
@@ -163,6 +164,13 @@ type UsePromptTarget = "base" | "ai";
 type PromptDisplayLanguage = "zh" | "en";
 type PromptTemplateImageFileWithSource = PromptTemplateImageFile & { sourceFile?: File };
 const PROMPT_TEMPLATE_COLOR_OPTION_LIMIT = 12;
+const PROMPT_OPTIMIZER_MODEL_STORAGE_KEY = "gpt-image.prompt-optimizer-model";
+
+function promptOptimizerSelection(value: string) {
+  if (!value || value === "system") return {};
+  const [providerId, model] = value.split("\u0000");
+  return providerId && model ? { optimizerProviderId: providerId, optimizerModel: model } : {};
+}
 const PROMPT_TEMPLATE_GRADIENT_OPTION_LIMIT = 12;
 const PROMPT_TEMPLATE_GRADIENT_COLOR_LIMIT = 5;
 const PROMPT_TEMPLATE_GRADIENT_COLOR_MIN = 2;
@@ -1162,6 +1170,7 @@ export function PromptTemplatesPage() {
   const resetNewChatComposer = useWorkbench((state) => state.resetNewChatComposer);
   const setSelectedAssets = useWorkbench((state) => state.setSelectedAssets);
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const promptOptimizerModels = useQuery({ queryKey: ["prompt-optimizer-models", "template.optimize"], queryFn: () => api.promptOptimizerModels("template.optimize") });
   const [scope, setScope] = useState<TemplateScope>(() => normalizeScope(searchParams.get("scope")));
   const [keyword, setKeyword] = useState(() => searchParams.get("keyword") ?? "");
   const [selectedId, setSelectedId] = useState(() => searchParams.get("template") ?? "");
@@ -1170,6 +1179,7 @@ export function PromptTemplatesPage() {
   const [baseDisplayLanguage, setBaseDisplayLanguage] = useState<PromptDisplayLanguage>("zh");
   const [aiDisplayLanguage, setAiDisplayLanguage] = useState<PromptDisplayLanguage>("zh");
   const [optimizeStyle, setOptimizeStyle] = useState<PromptTemplateOptimizeStyle>("standard");
+  const [promptOptimizerModelValue, setPromptOptimizerModelValue] = useState(() => window.localStorage.getItem(PROMPT_OPTIMIZER_MODEL_STORAGE_KEY) ?? "system");
   const [showPromptDiff, setShowPromptDiff] = useState(true);
   const [activeResult, setActiveResult] = useState<PromptTemplateResult | null>(null);
   const [optimizedSignature, setOptimizedSignature] = useState("");
@@ -1211,6 +1221,15 @@ export function PromptTemplatesPage() {
     () => sanitizePromptOptimizeStyleGroups(me.data?.user?.preferences?.promptOptimizeStyleGroups),
     [me.data?.user?.preferences?.promptOptimizeStyleGroups]
   );
+  const promptOptimizerModelOptions = useMemo<ModelPickerOption[]>(() => [
+    { value: "system", label: "跟随系统", description: promptOptimizerModels.data?.defaultSelection ? `${promptOptimizerModels.data.defaultSelection.providerName} · ${promptOptimizerModels.data.defaultSelection.model}` : "使用管理员默认配置" },
+    ...(promptOptimizerModels.data?.providers.flatMap((provider) => provider.models.map((model) => ({ value: `${provider.providerId}\u0000${model}`, label: model, description: provider.providerName, group: provider.providerName }))) ?? [])
+  ], [promptOptimizerModels.data]);
+  useEffect(() => {
+    if (promptOptimizerModelOptions.some((option) => option.value === promptOptimizerModelValue)) return;
+    setPromptOptimizerModelValue("system");
+    window.localStorage.setItem(PROMPT_OPTIMIZER_MODEL_STORAGE_KEY, "system");
+  }, [promptOptimizerModelOptions, promptOptimizerModelValue]);
   const scopeOptions = useMemo(() => promptTemplateScopeOptions(t), [t]);
   const savedPromptOptimizeCustomInstruction = me.data?.user?.preferences?.promptOptimizeCustomInstruction ?? "";
   const savePromptOptimizeCustomInstruction = useMutation({
@@ -1438,6 +1457,8 @@ export function PromptTemplatesPage() {
       basePrompt: string;
       optimizeStyle: PromptTemplateOptimizeStyle;
       customInstruction?: string;
+      optimizerProviderId?: string;
+      optimizerModel?: string;
     }) =>
       api.optimizePromptTemplateStream(
         payload.templateId,
@@ -1446,7 +1467,8 @@ export function PromptTemplatesPage() {
           formValues,
           basePrompt: payload.basePrompt,
           optimizeStyle: payload.optimizeStyle,
-          customInstruction: payload.customInstruction
+          customInstruction: payload.customInstruction,
+          ...(payload.optimizerProviderId ? { optimizerProviderId: payload.optimizerProviderId, optimizerModel: payload.optimizerModel } : {})
         },
         {
           onDelta: (chunk) => {
@@ -1785,7 +1807,7 @@ export function PromptTemplatesPage() {
       saveOptimizeStyle.mutate({ templateId: template.id, nextOptimizeStyle: nextStyle });
     }
     if (shouldAutoOptimize && template) {
-      optimize.mutate({ templateId: template.id, signature, basePrompt, optimizeStyle: nextStyle });
+      optimize.mutate({ templateId: template.id, signature, basePrompt, optimizeStyle: nextStyle, ...promptOptimizerSelection(promptOptimizerModelValue) });
     }
   }
 
@@ -2224,7 +2246,8 @@ export function PromptTemplatesPage() {
                       templateId: template.id,
                       signature,
                       basePrompt,
-                      optimizeStyle
+                      optimizeStyle,
+                      ...promptOptimizerSelection(promptOptimizerModelValue)
                     })}
                     disabled={Boolean(usingPromptTarget) || optimize.isPending || !basePrompt.trim()}
                     aria-label={t("promptTemplates.actions.optimizeWithStyle", { action: optimizeActionLabel, style: optimizeStyleOption.label })}
@@ -2243,7 +2266,8 @@ export function PromptTemplatesPage() {
                       signature,
                       basePrompt,
                       optimizeStyle,
-                      customInstruction: optimizeCustomInstruction
+                      customInstruction: optimizeCustomInstruction,
+                      ...promptOptimizerSelection(promptOptimizerModelValue)
                     })}
                     customInstructionSubmitDisabled={Boolean(usingPromptTarget) || optimize.isPending || !basePrompt.trim()}
                     customInstructionSubmitPending={optimize.isPending}
@@ -2251,6 +2275,19 @@ export function PromptTemplatesPage() {
                     className="prompt-optimize-style-select"
                     menuClassName="prompt-optimize-style-menu"
                     menuWidth={260}
+                  />
+                  <ModelPicker
+                    value={promptOptimizerModelValue}
+                    options={promptOptimizerModelOptions}
+                    onChange={(value) => {
+                      setPromptOptimizerModelValue(value);
+                      window.localStorage.setItem(PROMPT_OPTIMIZER_MODEL_STORAGE_KEY, value);
+                    }}
+                    kind="prompt"
+                    disabled={Boolean(usingPromptTarget) || optimize.isPending}
+                    className="prompt-template-model-select"
+                    menuClassName="prompt-template-model-menu"
+                    menuPlacement="bottom"
                   />
                 </div>
               </div>

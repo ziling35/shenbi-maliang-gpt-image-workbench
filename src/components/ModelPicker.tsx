@@ -8,8 +8,8 @@ export type ModelPickerOption = {
   group?: string;
 };
 
-export function ModelPicker({ value, options, onChange, kind, disabled }: { value: string; options: ModelPickerOption[]; onChange: (value: string) => void; kind: "image" | "prompt"; disabled?: boolean }) {
+export function ModelPicker({ value, options, onChange, kind, disabled, className, menuClassName, menuPlacement = "top" }: { value: string; options: ModelPickerOption[]; onChange: (value: string) => void; kind: "image" | "prompt"; disabled?: boolean; className?: string; menuClassName?: string; menuPlacement?: "top" | "bottom" }) {
   const Icon = kind === "image" ? ImageIcon : Bot;
   const selectOptions: SelectOption[] = options.map((option) => ({ ...option, icon: <Icon size={15} />, labelNoTranslate: true, descriptionNoTranslate: true, groupNoTranslate: true }));
-  return <CustomSelect value={value} options={selectOptions} onChange={onChange} disabled={disabled} ariaLabel={kind === "image" ? "选择生图模型" : "选择提示词优化模型"} className="composer-model-select" menuClassName="composer-model-menu" menuPlacement="top" menuWidth={300} />;
+  return <CustomSelect value={value} options={selectOptions} onChange={onChange} disabled={disabled} ariaLabel={kind === "image" ? "选择生图模型" : "选择提示词优化模型"} className={className ?? "composer-model-select"} menuClassName={menuClassName ?? "composer-model-menu"} menuPlacement={menuPlacement} menuWidth={300} />;
 }
