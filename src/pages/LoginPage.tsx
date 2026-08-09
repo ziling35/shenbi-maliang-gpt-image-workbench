@@ -45,10 +45,14 @@ function isRegisterEmail(value: string) {
 
 export function LoginPage({
   initialMode = "login",
-  onAuthenticated
+  onAuthenticated,
+  onClose,
+  className
 }: {
   initialMode?: LoginEntryMode;
   onAuthenticated?: () => void;
+  onClose?: () => void;
+  className?: string;
 } = {}) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
@@ -399,7 +403,7 @@ export function LoginPage({
   };
 
   return (
-    <main className={cx("login-page", `login-theme-${loginTheme}`)}>
+    <main className={cx("login-page", `login-theme-${loginTheme}`, className)}>
       <span className="login-background-layer" aria-hidden="true">
         <img
           src={loginBackground}

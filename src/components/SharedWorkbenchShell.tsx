@@ -3,6 +3,7 @@ import { ArrowUp, FolderOpen, ImagePlus, Images, Lightbulb, Menu, MessageCircle,
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "../i18n";
 import { cx } from "../lib/cx";
+import { LoginPage } from "../pages/LoginPage";
 import { SharedConversationPage } from "../pages/SharedConversationPage";
 import { ProjectLogo } from "./ProjectLogo";
 
@@ -44,15 +45,16 @@ export function SharedWorkbenchShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [collapsedToggleVisible, setCollapsedToggleVisible] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginNextPath, setLoginNextPath] = useState("");
 
   const openLogin = (next = "") => {
-    const params = new URLSearchParams(location.search);
-    params.set("auth", "login");
-    if (next) params.set("next", next);
-    else params.delete("next");
-    navigate({ pathname: location.pathname, search: `?${params.toString()}` });
+    setLoginNextPath(next);
+    setLoginOpen(true);
     setMobileMenuOpen(false);
   };
+
+  const closeLogin = () => setLoginOpen(false);
 
   return (
     <div className={cx("app-shell", "shared-guest-shell", sidebarCollapsed && "sidebar-collapsed", "sidebar-motion-expanded")}>
@@ -149,6 +151,22 @@ export function SharedWorkbenchShell() {
           <Route path="*" element={<GuestWorkbenchPage onLogin={() => openLogin(location.pathname)} />} />
         </Routes>
       </main>
+      {loginOpen ? (
+        <div className="guest-login-dialog" role="dialog" aria-modal="true" aria-label={t("login.login")}>
+          <button className="guest-login-dialog-close" type="button" onClick={closeLogin} aria-label={t("sidebar.closeMenu")}>
+            <X size={20} />
+          </button>
+          <LoginPage
+            className="guest-login-page"
+            onClose={closeLogin}
+            onAuthenticated={() => {
+              const nextPath = loginNextPath;
+              closeLogin();
+              if (nextPath) navigate(nextPath, { replace: true });
+            }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

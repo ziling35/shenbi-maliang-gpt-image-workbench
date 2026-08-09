@@ -1171,6 +1171,57 @@
   background: var(--app-text);
 }
 
+.guest-login-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.48);
+  padding: 24px;
+  backdrop-filter: blur(8px);
+}
+
+.guest-login-dialog-close {
+  position: absolute;
+  top: 28px;
+  right: 28px;
+  z-index: 3;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.48);
+  color: #fff;
+  cursor: pointer;
+}
+
+.guest-login-dialog-close:hover,
+.guest-login-dialog-close:focus-visible {
+  background: rgba(15, 23, 42, 0.72);
+  outline: none;
+}
+
+@media (max-width: 760px) {
+  .guest-login-dialog {
+    padding: 12px;
+  }
+
+  .guest-login-dialog-close {
+    top: 18px;
+    right: 18px;
+  }
+
+  .guest-login-page {
+    min-height: calc(100vh - 24px);
+    height: calc(100vh - 24px);
+    border-radius: 18px;
+  }
+}
+
 .user-footer-profile {
   min-width: 0;
   min-height: 42px;
