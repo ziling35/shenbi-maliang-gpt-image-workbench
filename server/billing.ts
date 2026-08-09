@@ -45,6 +45,35 @@ export function reserveImageCharge(userId: string, jobId: string, model: string,
   } catch (error) { appDb.exec("rollback"); throw error; }
 }
 
+export function settlePartialImageCharge(jobId: string, actualImageCount: number) {
+  const normalizedActualCount = Math.max(0, Math.trunc(Number(actualImageCount) || 0));
+  if (normalizedActualCount <= 0) return 0;
+  appDb.exec("begin immediate");
+  try {
+    const reservation = getOne<{ user_id: string; model: string; image_count: number; amount_cents: number; status: string }>(
+      appDb,
+      "select user_id,model,image_count,amount_cents,status from billing_reservations where job_id = ?",
+      jobId
+    );
+    if (!reservation || reservation.status !== "reserved" || normalizedActualCount >= reservation.image_count) {
+      appDb.exec("commit");
+      return 0;
+    }
+    const unitPriceCents = Math.trunc(reservation.amount_cents / reservation.image_count);
+    const actualAmountCents = unitPriceCents * normalizedActualCount;
+    const refundCents = reservation.amount_cents - actualAmountCents;
+    run(appDb, "update users set balance_cents = balance_cents + ?, updated_at = ? where id = ?", refundCents, now(), reservation.user_id);
+    const balance = getOne<{ balance_cents: number }>(appDb, "select balance_cents from users where id = ?", reservation.user_id)?.balance_cents ?? 0;
+    run(appDb, "update billing_reservations set image_count = ?, amount_cents = ?, updated_at = ? where job_id = ? and status = 'reserved'", normalizedActualCount, actualAmountCents, now(), jobId);
+    run(appDb, "insert or ignore into billing_ledger(id,user_id,type,amount_cents,balance_after_cents,reference_id,description,created_at) values(?,?,?,?,?,?,?,?)", `partial_refund_${jobId}_${normalizedActualCount}`, reservation.user_id, "refund", refundCents, balance, `${jobId}:partial`, `渠道少返回图片，退还 ${reservation.image_count - normalizedActualCount} 张费用`, now());
+    appDb.exec("commit");
+    return refundCents;
+  } catch (error) {
+    appDb.exec("rollback");
+    throw error;
+  }
+}
+
 function creditOrder(orderId: string, tradeNo: string) {
   appDb.exec("begin immediate");
   try {

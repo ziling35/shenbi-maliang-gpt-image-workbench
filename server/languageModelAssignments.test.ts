@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   defaultLanguageModelProviderFromRows,
+  isLikelyImageOnlyLanguageModel,
   normalizeLanguageModelDefaultFromRows,
   normalizeLanguageModelAssignmentsFromRows,
   resolveGlobalLanguageModelFromRows,
@@ -46,6 +47,7 @@ function assignment(input: Partial<LanguageModelAssignmentRow> = {}): LanguageMo
 
 const providers = [
   provider({ id: "disabled", name: "Disabled", model: "disabled-model", enabled: 0, sort_order: 10 }),
+  provider({ id: "image", name: "Image", model: "gpt-image-2", sort_order: 15 }),
   provider({ id: "deepseek", name: "DeepSeek", model: "deepseek-v4-flash", sort_order: 20 }),
   provider({ id: "other", name: "Other", model: "other-default", sort_order: 30 })
 ];
@@ -132,6 +134,14 @@ describe("language model assignment validation", () => {
     expect(selectableLanguageModelProviderFromRows(selectableProviders, "missing", "default-model")).toBeNull();
   });
 
+  test("excludes image generation models from language tasks", () => {
+    expect(isLikelyImageOnlyLanguageModel("gpt-image-2")).toBe(true);
+    expect(isLikelyImageOnlyLanguageModel("dall-e-3")).toBe(true);
+    expect(isLikelyImageOnlyLanguageModel("gpt-5.6-sol")).toBe(false);
+    expect(defaultLanguageModelProviderFromRows(providers)?.id).toBe("deepseek");
+    expect(selectableLanguageModelProviderFromRows(providers, "image", "gpt-image-2")).toBeNull();
+  });
+
   test("does not treat discovered provider catalogs as an allowlist", () => {
     const invalidCatalogProvider = provider({ id: "invalid", name: "Invalid", model: "default-model", models_json: "not-json" });
     expect(selectableLanguageModelProviderFromRows([invalidCatalogProvider], "invalid", "default-model")?.model).toBe("default-model");
@@ -148,6 +158,10 @@ describe("language model assignment validation", () => {
       { providerId: "disabled", model: "disabled-model" },
       providers
     )).toThrow("供应商未启用");
+    expect(() => normalizeLanguageModelDefaultFromRows(
+      { providerId: "image", model: "gpt-image-2" },
+      providers
+    )).toThrow("图片生成模型不能用于语言任务");
   });
 
   test("keeps explicit manual models and removes inherited rows", () => {
@@ -186,6 +200,9 @@ describe("language model assignment validation", () => {
     expect(() => normalizeLanguageModelAssignmentsFromRows([
       { usageKey: "prompt.optimize", providerId: "disabled", model: "model" }
     ], providers)).toThrow("供应商未启用");
+    expect(() => normalizeLanguageModelAssignmentsFromRows([
+      { usageKey: "prompt.optimize", providerId: "image", model: "gpt-image-2" }
+    ], providers)).toThrow("不能使用图片生成模型");
     expect(() => normalizeLanguageModelAssignmentsFromRows([
       { usageKey: "prompt.optimize", providerId: "deepseek", model: "one" },
       { usageKey: "prompt.optimize", providerId: "deepseek", model: "two" }

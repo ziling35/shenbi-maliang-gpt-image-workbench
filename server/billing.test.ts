@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { reserveImageCharge, signEpayParams } from "./billing";
+import { reserveImageCharge, settlePartialImageCharge, signEpayParams } from "./billing";
 import { appDb, configDb } from "./db";
 import { initAppDb, initConfigDb } from "./schema";
 
@@ -57,6 +57,20 @@ describe("billing", () => {
       expect(() => reserveImageCharge(fixture.userId, fixture.jobId, fixture.model, 1)).toThrow("余额不足");
       expect(appDb.query("select balance_cents from users where id=?").get(fixture.userId)).toEqual({ balance_cents: 100 });
       expect(appDb.query("select job_id from billing_reservations where job_id=?").get(fixture.jobId)).toBeNull();
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test("refunds missing images and captures only the delivered count", () => {
+    const fixture = billingFixture();
+    try {
+      expect(reserveImageCharge(fixture.userId, fixture.jobId, fixture.model, 4)).toBe(500);
+      expect(settlePartialImageCharge(fixture.jobId, 2)).toBe(250);
+      appDb.query("update image_jobs set status='succeeded' where id=?").run(fixture.jobId);
+      expect(appDb.query("select balance_cents from users where id=?").get(fixture.userId)).toEqual({ balance_cents: 750 });
+      expect(appDb.query("select image_count,amount_cents,status from billing_reservations where job_id=?").get(fixture.jobId)).toEqual({ image_count: 2, amount_cents: 250, status: "captured" });
+      expect(appDb.query("select amount_cents from billing_ledger where reference_id=?").get(`${fixture.jobId}:partial`)).toEqual({ amount_cents: 250 });
     } finally {
       fixture.cleanup();
     }

@@ -39,6 +39,16 @@ type LanguageModelResolution = {
 
 const LANGUAGE_MODEL_USAGE_KEY_SET = new Set<string>(LANGUAGE_MODEL_USAGE_KEYS);
 
+export function isLikelyImageOnlyLanguageModel(model: unknown) {
+  const value = String(model ?? "").trim().toLowerCase();
+  if (!value) return false;
+  return /(^|[-_/])(gpt-)?image([-/]|$)|dall[-_]?e|stable[-_ ]?diffusion|(^|[-_/])flux([-/]|$)|(^|[-_/])imagen([-/]|$)|(^|[-_/])seedream([-/]|$)/i.test(value);
+}
+
+function languageCapableProviders(providers: PromptOptimizerProviderRow[]) {
+  return providers.filter((provider) => !isLikelyImageOnlyLanguageModel(provider.model));
+}
+
 export function isLanguageModelUsageKey(value: unknown): value is LanguageModelUsageKey {
   return LANGUAGE_MODEL_USAGE_KEY_SET.has(String(value ?? "").trim());
 }
@@ -51,7 +61,7 @@ function orderedLanguageModelProviders() {
 }
 
 export function defaultLanguageModelProviderFromRows(providers: PromptOptimizerProviderRow[]) {
-  return providers.find((provider) => Boolean(provider.enabled)) ?? null;
+  return languageCapableProviders(providers).find((provider) => Boolean(provider.enabled)) ?? null;
 }
 
 export function resolveGlobalLanguageModelFromRows(
@@ -64,7 +74,7 @@ export function resolveGlobalLanguageModelFromRows(
   const providerId = String(assignment.provider_id ?? "").trim();
   const model = String(assignment.model ?? "").trim();
   const assignedProvider = providers.find((provider) => provider.id === providerId);
-  if (!assignedProvider || !assignedProvider.enabled || !model) {
+  if (!assignedProvider || !assignedProvider.enabled || !model || isLikelyImageOnlyLanguageModel(model)) {
     return { provider: fallback, status: "invalid" };
   }
   return {
@@ -84,7 +94,7 @@ export function resolveLanguageModelFromRows(
   const providerId = String(assignment.provider_id ?? "").trim();
   const model = String(assignment.model ?? "").trim();
   const assignedProvider = providers.find((provider) => provider.id === providerId);
-  if (!assignedProvider || !assignedProvider.enabled || !model) {
+  if (!assignedProvider || !assignedProvider.enabled || !model || isLikelyImageOnlyLanguageModel(model)) {
     return { provider: fallback, status: "invalid" };
   }
   return {
@@ -117,7 +127,7 @@ export function selectableLanguageModelProviderFromRows(
   const normalizedModel = String(model ?? "").trim();
   if (!normalizedProviderId || !normalizedModel) return null;
   const provider = providers.find((item) => item.id === normalizedProviderId && Boolean(item.enabled));
-  if (!provider) return null;
+  if (!provider || isLikelyImageOnlyLanguageModel(normalizedModel)) return null;
   return String(provider.model ?? "").trim() === normalizedModel ? { ...provider, model: normalizedModel } : null;
 }
 
@@ -127,7 +137,7 @@ export function selectableLanguageModelProvider(providerId: unknown, model: unkn
 
 export function publicSelectableLanguageModels() {
   return orderedLanguageModelProviders()
-    .filter((provider) => Boolean(provider.enabled))
+    .filter((provider) => Boolean(provider.enabled) && !isLikelyImageOnlyLanguageModel(provider.model))
     .map((provider) => ({
       providerId: provider.id,
       providerName: provider.name,
@@ -198,6 +208,7 @@ export function normalizeLanguageModelDefaultFromRows(
   const providerId = String(record.providerId ?? "").trim();
   const model = String(record.model ?? "").trim();
   if (!providerId || !model) throw new Error("请选择全局默认模型");
+  if (isLikelyImageOnlyLanguageModel(model)) throw new Error("图片生成模型不能用于语言任务");
   const provider = providers.find((item) => item.id === providerId);
   if (!provider && !preservedLanguageModelSelection(existingAssignment, providerId, model)) {
     throw new Error("全局默认模型选择的供应商不存在");
@@ -232,6 +243,7 @@ export function normalizeLanguageModelAssignmentsFromRows(
     const model = String(record.model ?? "").trim();
     if (!providerId && !model) continue;
     if (!providerId || !model) throw new Error(`场景「${usageKey}」必须同时选择供应商和模型`);
+    if (isLikelyImageOnlyLanguageModel(model)) throw new Error(`场景「${usageKey}」不能使用图片生成模型`);
     const provider = providerById.get(providerId);
     const preservesExisting = preservedLanguageModelSelection(existingAssignmentByUsageKey.get(usageKey), providerId, model);
     if (!provider && !preservesExisting) throw new Error(`场景「${usageKey}」选择的供应商不存在`);

@@ -68,7 +68,7 @@ import {
 import { requireUser } from "./auth";
 import { requireImageRouteUser } from "./externalMcpAuth";
 import { markProviderRequestPostProcessFailure } from "./auditLog";
-import { reserveImageCharge } from "./billing";
+import { reserveImageCharge, settlePartialImageCharge } from "./billing";
 import {
   deleteImageRecords,
   deleteImageRecordsBatch,
@@ -1208,8 +1208,10 @@ async function runStoredImageJob({
         );
       }
       const allImageIds = [...existingImages.map((image) => image.id), ...savedImageIds];
+      if (allImageIds.length === 0) throw new Error("渠道没有返回可保存的图片");
       if (allImageIds.length < requestedImageCount) {
-        throw new Error(`渠道返回图片数量不足：期望 ${requestedImageCount} 张，实际 ${allImageIds.length} 张`);
+        settlePartialImageCharge(job.id, allImageIds.length);
+        console.warn(`渠道返回图片数量不足，已按实际结果结算：期望 ${requestedImageCount} 张，实际 ${allImageIds.length} 张`);
       }
       await applyImageFieldSuggestions(allImageIds, job.prompt);
       await ensureImageEditSuggestionsForImages(job.user_id, allImageIds, preparedEditSuggestions);
@@ -1387,8 +1389,10 @@ async function runStoredImageJob({
       );
     }
     const allImageIds = [...existingImages.map((image) => image.id), ...savedImageIds];
+    if (allImageIds.length === 0) throw new Error("渠道没有返回可保存的图片");
     if (allImageIds.length < requestedImageCount) {
-      throw new Error(`渠道返回图片数量不足：期望 ${requestedImageCount} 张，实际 ${allImageIds.length} 张`);
+      settlePartialImageCharge(job.id, allImageIds.length);
+      console.warn(`渠道返回图片数量不足，已按实际结果结算：期望 ${requestedImageCount} 张，实际 ${allImageIds.length} 张`);
     }
     await applyImageFieldSuggestions(allImageIds);
     await ensureImageEditSuggestionsForImages(job.user_id, allImageIds, preparedEditSuggestions);
@@ -2080,8 +2084,10 @@ api.post("/images/generate", async (c) => {
         );
       }
       if (savedImageIds.length > 0) invalidateLibraryFacetCache("images");
+      if (savedImageIds.length === 0) throw new Error("渠道没有返回可保存的图片");
       if (savedImageIds.length < imageCount) {
-        throw new Error(`渠道返回图片数量不足：期望 ${imageCount} 张，实际 ${savedImageIds.length} 张`);
+        settlePartialImageCharge(jobId, savedImageIds.length);
+        console.warn(`渠道返回图片数量不足，已按实际结果结算：期望 ${imageCount} 张，实际 ${savedImageIds.length} 张`);
       }
       await applyImageFieldSuggestions(savedImageIds, prompt);
       await ensureImageEditSuggestionsForImages(user.id, savedImageIds, preparedEditSuggestions);
@@ -2550,8 +2556,10 @@ api.post("/images/edit", async (c) => {
     }
     const savedImageIds = savedImages.map((image) => image.id);
     if (savedImageIds.length > 0) invalidateLibraryFacetCache("images");
+    if (savedImageIds.length === 0) throw new Error("渠道没有返回可保存的图片");
     if (savedImageIds.length < imageCount) {
-      throw new Error(`渠道返回图片数量不足：期望 ${imageCount} 张，实际 ${savedImageIds.length} 张`);
+      settlePartialImageCharge(jobId, savedImageIds.length);
+      console.warn(`渠道返回图片数量不足，已按实际结果结算：期望 ${imageCount} 张，实际 ${savedImageIds.length} 张`);
     }
     await applyImageFieldSuggestions(savedImageIds);
     await ensureImageEditSuggestionsForImages(user.id, savedImageIds, preparedEditSuggestions);
