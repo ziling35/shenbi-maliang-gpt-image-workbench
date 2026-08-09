@@ -96,10 +96,17 @@ export default function App() {
   }
 
   if (!me.data?.user) {
+    if (!authMode) {
+      return (
+        <ToastProvider>
+          <SharedWorkbenchShell />
+        </ToastProvider>
+      );
+    }
     return (
       <ToastProvider>
         <LoginPage
-          initialMode={authMode ?? "login"}
+          initialMode={authMode}
           onAuthenticated={() => {
             const next = safeNextPath();
             if (next.startsWith("/oauth/authorize")) window.location.assign(next);
