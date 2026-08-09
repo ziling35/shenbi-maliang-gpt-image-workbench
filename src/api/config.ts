@@ -204,7 +204,7 @@ export type PromptOptimizerProviderTestResult = PromptOptimizerProviderModelsRes
 };
 
 export const configApi = {
-  billing: () => request<{ prices: Array<{model:string;price_cents:number;enabled:number;updated_at:string}>; epay:{enabled:boolean;apiUrl:string;merchantId:string;merchantKey:string;paymentTypes:string[];minimumRechargeCents:number}; users:Array<{id:string;account:string;username:string;balance_cents:number}> }>("/api/config/billing"),
+  billing: () => request<{ prices: Array<{model:string;price_cents:number;enabled:number;updated_at:string}>; textPrices:Array<{model:string;price_cents:number;enabled:number;updated_at:string}>; epay:{enabled:boolean;apiUrl:string;merchantId:string;merchantKey:string;paymentTypes:string[];minimumRechargeCents:number}; users:Array<{id:string;account:string;username:string;balance_cents:number}> }>("/api/config/billing"),
   saveBilling: (payload: unknown) => request<{ok:boolean}>("/api/config/billing",{method:"PUT",body:JSON.stringify(payload)}),
   adjustBalance: (userId:string,payload:{amount:number;description:string}) => request<{balanceCents:number}>(`/api/config/billing/users/${encodeURIComponent(userId)}/balance`,{method:"POST",body:JSON.stringify(payload)}),
   status: () => request<{ setupRequired: boolean; authenticated: boolean }>("/api/config/auth/status"),

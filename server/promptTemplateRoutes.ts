@@ -16,6 +16,7 @@ import {
   type PromptOptimizerProviderRow
 } from "./promptOptimizerRoutes";
 import { publicSelectableLanguageModels, resolveLanguageModelProvider, selectableLanguageModelProvider } from "./languageModelAssignments";
+import { captureTextModelCharge, refundTextModelCharge, reserveTextModelCharge } from "./billing";
 import type { AssetRow } from "./types";
 import { readStoredFile } from "./secureFiles";
 import { mimeTypeFromPath } from "./imageFiles";
@@ -1975,10 +1976,12 @@ async function requestPromptModelText({
   const startedAt = Date.now();
   let attemptCount = 0;
   let statusCode: number | null = null;
+  let textChargeId: string | null = null;
   try {
     if (!promptOptimizerApiKey(provider)) {
       throw new Error(`提示词优化模型「${provider.name}」缺少 API Key，请在配置页填写密钥或环境变量 ${envKey || "API_KEY"}`);
     }
+    if (logContext.userId) textChargeId = reserveTextModelCharge(logContext.userId, provider.model, logContext.source || logContext.purpose, logContext.jobId);
     const response = await fetchPromptOptimizerWithRetry(provider, endpoint, {
       method: "POST",
       headers: {
@@ -2021,6 +2024,7 @@ async function requestPromptModelText({
       if (content) onContent?.(content, content);
     }
     if (!content.trim()) throw new Error("提示词模型没有返回内容");
+    captureTextModelCharge(textChargeId);
     logModelRequest({
       ...logContext,
       providerId: provider.id,
@@ -2037,6 +2041,7 @@ async function requestPromptModelText({
     });
     return content.trim();
   } catch (error) {
+    refundTextModelCharge(textChargeId);
     logModelRequest({
       ...logContext,
       providerId: provider.id,

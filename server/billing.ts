@@ -6,6 +6,7 @@ import { storedSitePublicBaseUrl } from "./siteSettings";
 import { makeId, now } from "./utils";
 
 type ModelPrice = { model: string; price_cents: number; enabled: number; updated_at: string };
+type TextModelPrice = { model: string; price_cents: number; enabled: number; updated_at: string };
 type EpayRow = { enabled: number; api_url: string; merchant_id: string; merchant_key: string; payment_types: string; minimum_recharge_cents: number; updated_at: string };
 
 function epaySettings(secret = false) {
@@ -74,6 +75,51 @@ export function settlePartialImageCharge(jobId: string, actualImageCount: number
   }
 }
 
+export function reserveTextModelCharge(userId: string, model: string, purpose: string, referenceId = "") {
+  const price = getOne<TextModelPrice>(configDb, "select * from billing_text_model_prices where model = ? and enabled = 1", model);
+  if (!price || price.price_cents <= 0) return null;
+  const reservationId = makeId("textcharge");
+  appDb.exec("begin immediate");
+  try {
+    const changed = run(appDb, "update users set balance_cents = balance_cents - ?, updated_at = ? where id = ? and balance_cents >= ?", price.price_cents, now(), userId, price.price_cents);
+    if (!Number(changed.changes ?? 0)) throw new Error("余额不足，请先充值");
+    const balance = getOne<{ balance_cents: number }>(appDb, "select balance_cents from users where id = ?", userId)?.balance_cents ?? 0;
+    run(appDb, "insert into billing_text_reservations(id,user_id,model,purpose,amount_cents,status,reference_id,created_at,updated_at) values(?,?,?,?,?,'reserved',?,?,?)", reservationId, userId, model, purpose, price.price_cents, referenceId, now(), now());
+    run(appDb, "insert into billing_ledger(id,user_id,type,amount_cents,balance_after_cents,reference_id,description,created_at) values(?,?,?,?,?,?,?,?)", makeId("ledger"), userId, "consume", -price.price_cents, balance, reservationId, `${model} · ${purpose}`, now());
+    appDb.exec("commit");
+    return reservationId;
+  } catch (error) {
+    appDb.exec("rollback");
+    throw error;
+  }
+}
+
+export function captureTextModelCharge(reservationId: string | null | undefined) {
+  if (!reservationId) return;
+  run(appDb, "update billing_text_reservations set status='captured',updated_at=? where id=? and status='reserved'", now(), reservationId);
+}
+
+export function refundTextModelCharge(reservationId: string | null | undefined) {
+  if (!reservationId) return 0;
+  appDb.exec("begin immediate");
+  try {
+    const reservation = getOne<{ user_id: string; model: string; purpose: string; amount_cents: number; status: string }>(appDb, "select user_id,model,purpose,amount_cents,status from billing_text_reservations where id=?", reservationId);
+    if (!reservation || reservation.status !== "reserved") {
+      appDb.exec("commit");
+      return 0;
+    }
+    run(appDb, "update users set balance_cents=balance_cents+?,updated_at=? where id=?", reservation.amount_cents, now(), reservation.user_id);
+    const balance = getOne<{ balance_cents: number }>(appDb, "select balance_cents from users where id=?", reservation.user_id)?.balance_cents ?? 0;
+    run(appDb, "update billing_text_reservations set status='refunded',updated_at=? where id=? and status='reserved'", now(), reservationId);
+    run(appDb, "insert or ignore into billing_ledger(id,user_id,type,amount_cents,balance_after_cents,reference_id,description,created_at) values(?,?,?,?,?,?,?,?)", `refund_${reservationId}`, reservation.user_id, "refund", reservation.amount_cents, balance, reservationId, `${reservation.model} 调用失败退款`, now());
+    appDb.exec("commit");
+    return reservation.amount_cents;
+  } catch (error) {
+    appDb.exec("rollback");
+    throw error;
+  }
+}
+
 function creditOrder(orderId: string, tradeNo: string) {
   appDb.exec("begin immediate");
   try {
@@ -98,11 +144,13 @@ export function registerBillingRoutes(api: Hono) {
     const orders = getAll(appDb, "select id,amount_cents,status,payment_type,created_at,paid_at from recharge_orders where user_id=? order by created_at desc limit 20", user.id);
     const ledger = getAll(appDb, "select id,type,amount_cents,balance_after_cents,description,created_at from billing_ledger where user_id=? order by created_at desc,id desc limit 30", user.id);
     const prices = getAll<ModelPrice>(configDb, "select model,price_cents,enabled,updated_at from billing_model_prices where enabled=1 order by model");
+    const textPrices = getAll<TextModelPrice>(configDb, "select model,price_cents,enabled,updated_at from billing_text_model_prices where enabled=1 order by model");
     const payment = epaySettings();
     return c.json({
       balanceCents: current?.balance_cents ?? 0,
       payment: { enabled: payment.enabled, paymentTypes: payment.paymentTypes, minimumRechargeCents: payment.minimumRechargeCents },
       prices,
+      textPrices,
       orders,
       ledger
     });
@@ -132,15 +180,18 @@ export function registerBillingRoutes(api: Hono) {
   });
   api.get("/config/billing", (c) => {
     const blocked = requireConfig(c); if (blocked) return blocked;
-    return c.json({ prices: getAll(configDb, "select model,price_cents,enabled,updated_at from billing_model_prices order by model"), epay: epaySettings(), users: getAll(appDb, "select id,account,username,balance_cents from users order by created_at desc") });
+    return c.json({ prices: getAll(configDb, "select model,price_cents,enabled,updated_at from billing_model_prices order by model"), textPrices: getAll(configDb, "select model,price_cents,enabled,updated_at from billing_text_model_prices order by model"), epay: epaySettings(), users: getAll(appDb, "select id,account,username,balance_cents from users order by created_at desc") });
   });
   api.put("/config/billing", async (c) => {
     const blocked = requireConfig(c); if (blocked) return blocked;
     const body = await c.req.json().catch(() => ({})); const timestamp = now();
     const prices = Array.isArray(body.prices) ? body.prices : [];
+    const textPrices = Array.isArray(body.textPrices) ? body.textPrices : [];
     configDb.exec("begin immediate"); try {
       run(configDb, "delete from billing_model_prices");
       for (const item of prices) { const model=String(item.model??"").trim(); const cents=Math.round(Number(item.price)*100); if(model&&Number.isSafeInteger(cents)&&cents>=0) run(configDb,"insert into billing_model_prices(model,price_cents,enabled,updated_at) values(?,?,?,?)",model,cents,item.enabled===false?0:1,timestamp); }
+      run(configDb, "delete from billing_text_model_prices");
+      for (const item of textPrices) { const model=String(item.model??"").trim(); const cents=Math.round(Number(item.price)*100); if(model&&Number.isSafeInteger(cents)&&cents>=0) run(configDb,"insert into billing_text_model_prices(model,price_cents,enabled,updated_at) values(?,?,?,?)",model,cents,item.enabled===false?0:1,timestamp); }
       const epay=body.epay??{}; const existing=epaySettings(true); const key=String(epay.merchantKey??"")==="********"?existing.merchantKey:String(epay.merchantKey??"");
       if (epay.enabled && (!String(epay.apiUrl??"").trim() || !String(epay.merchantId??"").trim() || !key)) throw new Error("启用易支付前请完整填写接口地址、商户号和商户密钥");
       run(configDb, `insert into epay_settings(id,enabled,api_url,merchant_id,merchant_key,payment_types,minimum_recharge_cents,updated_at) values('default',?,?,?,?,?,?,?) on conflict(id) do update set enabled=excluded.enabled,api_url=excluded.api_url,merchant_id=excluded.merchant_id,merchant_key=excluded.merchant_key,payment_types=excluded.payment_types,minimum_recharge_cents=excluded.minimum_recharge_cents,updated_at=excluded.updated_at`, epay.enabled?1:0,String(epay.apiUrl??"").trim(),String(epay.merchantId??"").trim(),key,(Array.isArray(epay.paymentTypes)?epay.paymentTypes:["alipay","wxpay"]).join(","),Math.max(1,Math.round(Number(epay.minimumRecharge??1)*100)),timestamp);

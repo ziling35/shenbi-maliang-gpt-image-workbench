@@ -6,6 +6,7 @@ import {
   type PromptOptimizerProviderRow
 } from "./promptOptimizerRoutes";
 import { logModelRequest } from "./auditLog";
+import { captureTextModelCharge, refundTextModelCharge, reserveTextModelCharge } from "./billing";
 import { resolveLanguageModelProvider, type LanguageModelUsageKey } from "./languageModelAssignments";
 import type { EditSuggestionTone } from "./userPreferences";
 import { normalizePath, safeJson } from "./utils";
@@ -535,8 +536,10 @@ async function requestPromptModelText(
   const startedAt = Date.now();
   let attemptCount = 0;
   let statusCode: number | null = null;
+  let textChargeId: string | null = null;
   try {
     if (!promptOptimizerApiKey(provider)) throw new Error(`提示词优化模型「${provider.name}」缺少 API Key`);
+    if (logContext?.userId) textChargeId = reserveTextModelCharge(logContext.userId, provider.model, logContext.source || logContext.purpose, logContext.jobId);
     const response = await fetchPromptOptimizerWithRetry(provider, endpoint, {
       method: "POST",
       signal: controller.signal,
@@ -565,6 +568,8 @@ async function requestPromptModelText(
       const text = await response.text();
       content = chatCompletionContent(safeJson<unknown>(text, null), text);
     }
+    if (!content.trim()) throw new Error("提示词模型没有返回内容");
+    captureTextModelCharge(textChargeId);
     if (logContext) {
       logModelRequest({
         ...logContext,
@@ -583,6 +588,7 @@ async function requestPromptModelText(
     }
     return content;
   } catch (error) {
+    refundTextModelCharge(textChargeId);
     if (logContext) {
       logModelRequest({
         ...logContext,

@@ -626,6 +626,11 @@ export function initAppDb() {
     job_id text primary key, user_id text not null, model text not null, image_count integer not null,
     amount_cents integer not null, status text not null default 'reserved', created_at text not null, updated_at text not null
   )`);
+  appDb.run(`create table if not exists billing_text_reservations (
+    id text primary key, user_id text not null, model text not null, purpose text not null,
+    amount_cents integer not null, status text not null default 'reserved', reference_id text not null default '',
+    created_at text not null, updated_at text not null
+  )`);
   appDb.run(`create table if not exists recharge_orders (
     id text primary key, user_id text not null, amount_cents integer not null, status text not null default 'pending',
     payment_type text not null default 'alipay', trade_no text not null default '', created_at text not null, paid_at text, updated_at text not null
@@ -1970,6 +1975,9 @@ export function initAppDb() {
 export function initConfigDb() {
   configDb.run("PRAGMA journal_mode = MEMORY");
   configDb.run(`create table if not exists billing_model_prices (
+    model text primary key, price_cents integer not null, enabled integer not null default 1, updated_at text not null
+  )`);
+  configDb.run(`create table if not exists billing_text_model_prices (
     model text primary key, price_cents integer not null, enabled integer not null default 1, updated_at text not null
   )`);
   configDb.run(`create table if not exists epay_settings (

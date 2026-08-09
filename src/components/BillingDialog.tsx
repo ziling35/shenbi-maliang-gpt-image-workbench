@@ -51,7 +51,7 @@ export function BillingDialog({ open, onClose }: { open: boolean; onClose: () =>
         <header>
           <div>
             <span className="billing-dialog-icon"><WalletCards size={22} /></span>
-            <div><h2>余额与充值</h2><p>余额用于图片生成和编辑任务</p></div>
+            <div><h2>余额与充值</h2><p>余额用于图片生成、编辑和文字模型调用</p></div>
           </div>
           <button className="icon-btn" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
         </header>
@@ -73,8 +73,12 @@ export function BillingDialog({ open, onClose }: { open: boolean; onClose: () =>
                 </form>
               ) : <div className="billing-disabled">管理员尚未开启在线支付</div>}
               <div className="billing-orders billing-price-list">
-                <h3>模型价格</h3>
+                <h3>生图模型价格</h3>
                 {(account.data?.prices ?? []).length === 0 ? <p>暂无可用模型价格</p> : (account.data?.prices ?? []).map((price) => <div key={price.model}><span>{price.model}</span><small>¥{(price.price_cents / 100).toFixed(2)} / 张</small></div>)}
+              </div>
+              <div className="billing-orders billing-price-list">
+                <h3>文字模型价格</h3>
+                {(account.data?.textPrices ?? []).length === 0 ? <p>暂无收费文字模型</p> : (account.data?.textPrices ?? []).map((price) => <div key={price.model}><span>{price.model}</span><small>¥{(price.price_cents / 100).toFixed(2)} / 次</small></div>)}
               </div>
             </div>
           ) : (
