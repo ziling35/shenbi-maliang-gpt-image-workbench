@@ -10,7 +10,7 @@
 }
 
 .billing-dialog-backdrop { z-index: 80; }
-.billing-dialog { width: min(480px, calc(100vw - 28px)); max-height: min(760px, calc(100vh - 32px)); overflow: auto; border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-surface); color: var(--app-text); padding: 22px; box-shadow: 0 24px 80px rgba(15,23,42,.24); }
+.billing-dialog { width: min(520px, calc(100vw - 28px)); height:min(680px,calc(100vh - 32px)); overflow:hidden; display:grid; grid-template-rows:auto auto auto minmax(0,1fr); border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-surface); color: var(--app-text); padding: 22px; box-shadow: 0 24px 80px rgba(15,23,42,.24); }
 .billing-dialog > header, .billing-dialog > header > div { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .billing-dialog > header h2, .billing-dialog > header p { margin:0; } .billing-dialog > header p { margin-top:3px; color:var(--app-muted); font-size:13px; }
 .billing-dialog-icon { width:40px; height:40px; display:grid; place-items:center; border-radius:10px; background:var(--button-default-bg); }
@@ -19,6 +19,18 @@
 .billing-payment-types{display:flex;gap:8px;flex-wrap:wrap}.billing-payment-types button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--app-border);border-radius:8px;background:transparent;color:inherit;padding:9px 12px}.billing-payment-types button.active{border-color:var(--app-text);background:var(--button-default-bg)}
 .billing-orders{margin-top:22px;border-top:1px solid var(--app-border);padding-top:16px}.billing-orders h3{margin:0 0 10px;font-size:15px}.billing-orders>div{display:flex;justify-content:space-between;padding:9px 0}.billing-orders p,.billing-orders small,.billing-disabled{color:var(--app-muted)}
 .billing-orders .billing-income{color:#15803d}.billing-orders .billing-expense{color:#b91c1c}
+.billing-view-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:16px;padding:4px;border-radius:8px;background:var(--button-default-bg)}
+.billing-view-tabs button,.billing-record-tabs button{min-height:36px;display:flex;align-items:center;justify-content:center;gap:7px;border:0;border-radius:6px;background:transparent;color:var(--app-muted)}
+.billing-view-tabs button.active,.billing-record-tabs button.active{background:var(--app-surface);color:var(--app-text);box-shadow:0 1px 3px rgba(15,23,42,.12)}
+.billing-dialog-content{min-height:0;overflow:auto;padding-top:16px}
+.billing-records-view{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto;gap:12px}
+.billing-record-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;border-bottom:1px solid var(--app-border);padding-bottom:10px}
+.billing-record-list{min-height:0;overflow:auto}
+.billing-record-list>div{min-height:62px;display:flex;align-items:center;justify-content:space-between;gap:18px;border-bottom:1px solid var(--app-border);padding:10px 4px}
+.billing-record-list>div>span{min-width:0;display:grid;gap:4px}.billing-record-list strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;font-weight:500}.billing-record-list small,.billing-record-list p{color:var(--app-muted)}
+.billing-record-list .billing-income{color:#15803d}.billing-record-list .billing-expense{color:#b91c1c}
+.billing-pagination{min-height:36px;display:flex;align-items:center;justify-content:space-between;color:var(--app-muted);font-size:13px}.billing-pagination>div{display:flex;gap:6px}.billing-pagination .icon-btn{width:34px;height:34px}.billing-pagination .icon-btn:disabled{opacity:.35}
+@media(max-width:560px){.billing-dialog{height:calc(100vh - 16px);width:calc(100vw - 16px);padding:18px}.billing-dialog-icon{display:none}}
 
 .case-modal {
   width: min(900px, 100%);
