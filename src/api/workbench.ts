@@ -629,7 +629,7 @@ export const api = {
   imageTaskSounds: () => request<{ sounds: import("../types").ImageTaskSound[] }>("/api/image-task-sounds"),
   branding: () => request<PublicBranding>("/api/branding"),
   loginAssets: () => request<LoginAssets>("/api/login-assets"),
-  registrationStatus: () => request<{ enabled: boolean }>("/api/auth/registration-status"),
+  registrationStatus: () => request<{ enabled: boolean; emailVerificationRequired: boolean }>("/api/auth/registration-status"),
   login: (account: string, password: string) =>
     request<{ user: User }>("/api/auth/login", {
       method: "POST",

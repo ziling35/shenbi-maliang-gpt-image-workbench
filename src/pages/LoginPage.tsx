@@ -45,10 +45,14 @@ function isRegisterEmail(value: string) {
 
 export function LoginPage({
   initialMode = "login",
-  onAuthenticated
+  onAuthenticated,
+  onClose,
+  className
 }: {
   initialMode?: LoginEntryMode;
   onAuthenticated?: () => void;
+  onClose?: () => void;
+  className?: string;
 } = {}) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
@@ -92,6 +96,7 @@ export function LoginPage({
   const registrationStatus = useQuery({ queryKey: ["registration-status"], queryFn: api.registrationStatus });
   const branding = useQuery({ queryKey: ["branding"], queryFn: api.branding });
   const registrationEnabled = registrationStatus.data?.enabled === true;
+  const emailVerificationRequired = registrationStatus.data?.emailVerificationRequired !== false;
   const login = useMutation({
     mutationFn: () => api.login(account, password),
     onSuccess: async () => {
@@ -399,7 +404,7 @@ export function LoginPage({
   };
 
   return (
-    <main className={cx("login-page", `login-theme-${loginTheme}`)}>
+    <main className={cx("login-page", `login-theme-${loginTheme}`, className)}>
       <span className="login-background-layer" aria-hidden="true">
         <img
           src={loginBackground}
@@ -565,21 +570,23 @@ export function LoginPage({
                   />
                 </span>
               </label>
-              <label className="login-field">
-                <span className="visually-hidden">{t("login.code")}</span>
-                <span className="login-input-shell">
-                  <ShieldCheck size={20} className="login-input-icon" aria-hidden="true" />
-                  <input value={registerCode} onChange={(event) => setRegisterCode(event.target.value)} placeholder={t("login.code")} inputMode="numeric" />
-                  <button
-                    className="login-code-button"
-                    type="button"
-                    disabled={sendRegisterCode.isPending || registerCooldown > 0 || !registerEmail.trim()}
-                    onClick={() => sendRegisterCode.mutate()}
-                  >
-                    {registerCooldown > 0 ? `${registerCooldown}s` : sendRegisterCode.isPending ? t("login.sending") : t("login.getCode")}
-                  </button>
-                </span>
-              </label>
+              {emailVerificationRequired ? (
+                <label className="login-field">
+                  <span className="visually-hidden">{t("login.code")}</span>
+                  <span className="login-input-shell">
+                    <ShieldCheck size={20} className="login-input-icon" aria-hidden="true" />
+                    <input value={registerCode} onChange={(event) => setRegisterCode(event.target.value)} placeholder={t("login.code")} inputMode="numeric" />
+                    <button
+                      className="login-code-button"
+                      type="button"
+                      disabled={sendRegisterCode.isPending || registerCooldown > 0 || !registerEmail.trim()}
+                      onClick={() => sendRegisterCode.mutate()}
+                    >
+                      {registerCooldown > 0 ? `${registerCooldown}s` : sendRegisterCode.isPending ? t("login.sending") : t("login.getCode")}
+                    </button>
+                  </span>
+                </label>
+              ) : null}
               <label className="login-field">
                 <span className="visually-hidden">{t("login.password")}</span>
                 <span className="login-input-shell">

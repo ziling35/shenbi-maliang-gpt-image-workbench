@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { FolderOpen, Images, Lightbulb, Menu, MessageCircle, MessageCirclePlus, PanelLeft, Search, Sparkles, X } from "lucide-react";
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { ArrowUp, FolderOpen, ImagePlus, Images, Lightbulb, Menu, MessageCircle, MessageCirclePlus, PanelLeft, Search, Sparkles, X } from "lucide-react";
+import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "../i18n";
 import { cx } from "../lib/cx";
+import { LoginPage } from "../pages/LoginPage";
 import { SharedConversationPage } from "../pages/SharedConversationPage";
 import { ProjectLogo } from "./ProjectLogo";
 
@@ -13,6 +14,30 @@ const guestNavigation = [
   { path: "/prompt-templates", labelKey: "sidebar.promptCreation", icon: Sparkles }
 ] as const;
 
+function GuestWorkbenchPage({ onLogin }: { onLogin: () => void }) {
+  const { t } = useI18n();
+
+  return (
+    <section className="guest-workbench-page">
+      <div className="guest-workbench-intro">
+        <ProjectLogo className="guest-workbench-logo" />
+        <h1>{t("sidebar.newConversation")}</h1>
+        <button className="guest-composer" type="button" onClick={onLogin}>
+          <span className="guest-composer-placeholder">{t("chat.placeholder.new")}</span>
+          <span className="guest-composer-toolbar" aria-hidden="true">
+            <span className="guest-composer-attach">
+              <ImagePlus size={20} />
+            </span>
+            <span className="guest-composer-send">
+              <ArrowUp size={18} />
+            </span>
+          </span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function SharedWorkbenchShell() {
   const { t } = useI18n();
   const location = useLocation();
@@ -20,15 +45,16 @@ export function SharedWorkbenchShell() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [collapsedToggleVisible, setCollapsedToggleVisible] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginNextPath, setLoginNextPath] = useState("");
 
   const openLogin = (next = "") => {
-    const params = new URLSearchParams(location.search);
-    params.set("auth", "login");
-    if (next) params.set("next", next);
-    else params.delete("next");
-    navigate({ pathname: location.pathname, search: `?${params.toString()}` });
+    setLoginNextPath(next);
+    setLoginOpen(true);
     setMobileMenuOpen(false);
   };
+
+  const closeLogin = () => setLoginOpen(false);
 
   return (
     <div className={cx("app-shell", "shared-guest-shell", sidebarCollapsed && "sidebar-collapsed", "sidebar-motion-expanded")}>
@@ -55,7 +81,7 @@ export function SharedWorkbenchShell() {
               </div>
               <div className="sidebar-head-actions">
                 {!sidebarCollapsed ? (
-                  <button className="sidebar-head-search is-share-disabled" type="button" aria-label={t("sidebar.globalSearch")} disabled aria-disabled="true">
+                  <button className="sidebar-head-search" type="button" aria-label={t("sidebar.globalSearch")} onClick={() => openLogin(location.pathname)}>
                     <Search size={18} />
                   </button>
                 ) : null}
@@ -77,12 +103,12 @@ export function SharedWorkbenchShell() {
               </div>
             </div>
             <nav className="main-nav-actions">
-              <button className="nav-item is-share-disabled" type="button" disabled aria-disabled="true">
+              <button className="nav-item" type="button" onClick={() => openLogin("/")}>
                 <MessageCirclePlus size={18} />
                 <span>{t("sidebar.newConversation")}</span>
               </button>
               {sidebarCollapsed ? (
-                <button className="nav-item is-share-disabled" type="button" aria-label={t("sidebar.globalSearch")} disabled aria-disabled="true">
+                <button className="nav-item" type="button" aria-label={t("sidebar.globalSearch")} onClick={() => openLogin(location.pathname)}>
                   <Search size={18} />
                   <span>{t("sidebar.globalSearch")}</span>
                 </button>
@@ -94,7 +120,7 @@ export function SharedWorkbenchShell() {
               {guestNavigation.map((item) => {
                 const Icon = item.icon;
                 return (
-                  <button className="nav-item is-share-disabled" type="button" key={item.path} disabled aria-disabled="true">
+                  <button className="nav-item" type="button" key={item.path} onClick={() => openLogin(item.path)}>
                     <Icon size={18} />
                     <span>{t(item.labelKey)}</span>
                   </button>
@@ -122,9 +148,28 @@ export function SharedWorkbenchShell() {
       <main className="content">
         <Routes>
           <Route path="/share/:token" element={<SharedConversationPage authenticated={false} />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<GuestWorkbenchPage onLogin={() => openLogin(location.pathname)} />} />
         </Routes>
       </main>
+      {loginOpen ? (
+        <div className="guest-login-dialog" role="dialog" aria-modal="true" aria-label={t("login.login")}>
+          <button className="guest-login-dialog-close" type="button" onClick={closeLogin} aria-label={t("sidebar.closeMenu")}>
+            <X size={20} />
+          </button>
+          <div className="guest-login-dialog-card">
+            <h2>{t("login.login")}</h2>
+          <LoginPage
+            className="guest-login-page"
+            onClose={closeLogin}
+            onAuthenticated={() => {
+              const nextPath = loginNextPath;
+              closeLogin();
+              if (nextPath) navigate(nextPath, { replace: true });
+            }}
+          />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

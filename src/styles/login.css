@@ -62,6 +62,13 @@
     color 220ms ease;
 }
 
+.guest-login-page {
+  min-height: min(760px, calc(100vh - 48px));
+  height: min(760px, calc(100vh - 48px));
+  border-radius: 24px;
+  overflow: hidden;
+}
+
 .login-page.login-theme-dark {
   --login-background-color: #07131c;
   --login-overlay:

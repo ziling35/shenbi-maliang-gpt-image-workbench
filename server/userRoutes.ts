@@ -19,7 +19,7 @@ import { currentUser, futureDate, requireUser } from "./auth";
 import { pageInfo, paginationFromQuery } from "./pagination";
 import { fallbackChineseUsername, fallbackChineseUsernameCount, generateChineseUsername, generateChineseUsernameCandidates } from "./promptTitle";
 import { REGISTRATION_DISABLED_MESSAGE, selfRegistrationEnabled, registrationSettings } from "./registrationSettings";
-import { sendVerificationEmail } from "./smtp";
+import { sendVerificationEmail, smtpSettings } from "./smtp";
 import { normalizePhone as normalizeSmsPhone, sendVerificationSms, validMainlandPhone } from "./sms";
 import { validateUsername } from "./usernamePolicy";
 import { deleteAccountConfirmationText, deleteUserAccount } from "./userDeletion";
@@ -330,7 +330,10 @@ api.get("/login-assets", async (c) => {
 });
 
 api.get("/auth/registration-status", (c) => {
-  return c.json({ enabled: registrationSettings().enabled });
+  return c.json({
+    enabled: registrationSettings().enabled,
+    emailVerificationRequired: smtpSettings().enabled
+  });
 });
 
 api.post("/auth/register/code", async (c) => {
@@ -352,12 +355,15 @@ api.post("/auth/register", async (c) => {
   const email = normalizeEmail(body.email);
   const code = String(body.code ?? "").trim();
   const password = String(body.password ?? "");
+  const emailVerificationRequired = smtpSettings().enabled;
   if (!validEmail(email)) return c.json({ error: "请输入正确的邮箱地址" }, 400);
-  if (!code) return c.json({ error: "请输入邮箱验证码" }, 400);
+  if (emailVerificationRequired && !code) return c.json({ error: "请输入邮箱验证码" }, 400);
   if (password.length < 6) return c.json({ error: "密码至少 6 位" }, 400);
   if (findUserByEmailIdentity(email)) return c.json({ error: "邮箱已注册" }, 409);
-  const verified = await consumeEmailVerificationCode("register", email, code);
-  if ("error" in verified) return c.json({ error: verified.error }, verified.status);
+  if (emailVerificationRequired) {
+    const verified = await consumeEmailVerificationCode("register", email, code);
+    if ("error" in verified) return c.json({ error: verified.error }, verified.status);
+  }
 
   const timestamp = now();
   const userId = makeId("user");
@@ -378,7 +384,7 @@ api.post("/auth/register", async (c) => {
       await Bun.password.hash(password),
       0,
       0,
-      timestamp,
+      emailVerificationRequired ? timestamp : null,
       null,
       timestamp,
       timestamp
