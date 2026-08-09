@@ -70,6 +70,11 @@ import { requireImageRouteUser } from "./externalMcpAuth";
 import { markProviderRequestPostProcessFailure } from "./auditLog";
 import { reserveImageCharge, settlePartialImageCharge } from "./billing";
 import {
+  requestedImageCountFromPayload,
+  singleImageSupplementPayload,
+  supplementalImageRequestBudget
+} from "./imageRequestSupplement";
+import {
   deleteImageRecords,
   deleteImageRecordsBatch,
   deleteImageJobArtifacts,
@@ -507,7 +512,23 @@ async function saveProviderImagesWithRetry({
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (signal?.aborted) throw new Error("图片任务已取消");
     try {
-      const { provider, responseJson, result: savedImages } = await callProviderChain<Awaited<ReturnType<typeof saveProviderImageResults>>>(
+      const saveResponseImages = async (provider: RuntimeProviderRow, responseJson: unknown, responseAttemptNo: number) => {
+        onResponseJson?.(responseJson);
+        try {
+          return await saveProviderImageResults(responseJson, provider, () => makeId("img"), userId, sessionId);
+        } catch (error) {
+          markProviderRequestPostProcessFailure({
+            provider,
+            operation: mode,
+            jobId,
+            attemptNo: responseAttemptNo,
+            error: errorMessage(error, `${imageOperationLabel(mode)}失败`),
+            responseSnapshot: providerResponseSnapshot(responseJson)
+          });
+          throw error;
+        }
+      };
+      const { provider, responseJson, result: initialSavedImages } = await callProviderChain<Awaited<ReturnType<typeof saveProviderImageResults>>>(
         providers,
         mode,
         requestPayload,
@@ -519,31 +540,68 @@ async function saveProviderImagesWithRetry({
           isRetry: attempt > 1,
           signal
         },
-        async ({ provider, responseJson }) => {
-          onResponseJson?.(responseJson);
-          try {
-            return await saveProviderImageResults(responseJson, provider, () => makeId("img"), userId, sessionId);
-          } catch (error) {
-            markProviderRequestPostProcessFailure({
-              provider,
-              operation: mode,
+        ({ provider, responseJson }) => saveResponseImages(provider, responseJson, attempt)
+      );
+      if (!initialSavedImages) {
+        throw new Error(`${imageOperationLabel(mode)}失败：渠道没有返回可保存的图片`);
+      }
+      const requestedImageCount = requestedImageCountFromPayload(requestPayload);
+      const savedImages = [...initialSavedImages];
+      const responseJsons = [responseJson];
+      const extraInitialImages = savedImages.splice(requestedImageCount);
+      if (extraInitialImages.length > 0) {
+        await deleteStoredFilesIfUnreferenced(extraInitialImages.map((image) => image.file.path));
+      }
+      const supplementPayload = singleImageSupplementPayload(requestPayload);
+      const supplementBudget = supplementalImageRequestBudget(requestedImageCount, savedImages.length, retryCount);
+      for (let supplementAttempt = 1; savedImages.length < requestedImageCount && supplementAttempt <= supplementBudget; supplementAttempt += 1) {
+        if (signal?.aborted) {
+          await deleteStoredFilesIfUnreferenced(savedImages.map((image) => image.file.path));
+          throw new Error("图片任务已取消");
+        }
+        try {
+          const supplementResponseAttemptNo = attempt + supplementAttempt;
+          const supplement = await callProviderChain<Awaited<ReturnType<typeof saveProviderImageResults>>>(
+            [provider],
+            mode,
+            supplementPayload,
+            {
+              userId,
               jobId,
-              attemptNo: attempt,
-              error: errorMessage(error, `${imageOperationLabel(mode)}失败`),
-              responseSnapshot: providerResponseSnapshot(responseJson)
-            });
+              attemptNo: supplementResponseAttemptNo,
+              maxAttempts: attempt + supplementBudget,
+              isRetry: true,
+              signal
+            },
+            ({ provider: supplementProvider, responseJson: supplementResponseJson }) => saveResponseImages(supplementProvider, supplementResponseJson, supplementResponseAttemptNo)
+          );
+          responseJsons.push(supplement.responseJson);
+          const supplementalImages = supplement.result ?? [];
+          const remainingCount = requestedImageCount - savedImages.length;
+          savedImages.push(...supplementalImages.slice(0, remainingCount));
+          const extraImages = supplementalImages.slice(remainingCount);
+          if (extraImages.length > 0) {
+            await deleteStoredFilesIfUnreferenced(extraImages.map((image) => image.file.path));
+          }
+        } catch (error) {
+          if (providerRequestWasCancelled(error, signal)) {
+            await deleteStoredFilesIfUnreferenced(savedImages.map((image) => image.file.path));
             throw error;
           }
+          console.warn(`渠道少图，自动补图第 ${supplementAttempt}/${supplementBudget} 次失败`, errorMessage(error, `${imageOperationLabel(mode)}补图失败`));
         }
-      );
-      if (!savedImages) {
-        throw new Error(`${imageOperationLabel(mode)}失败：渠道没有返回可保存的图片`);
+      }
+      if (savedImages.length < requestedImageCount) {
+        console.warn(`渠道自动补图后数量仍不足：期望 ${requestedImageCount} 张，实际 ${savedImages.length} 张`);
+      } else if (responseJsons.length > 1) {
+        console.info(`渠道少图已自动补齐：期望 ${requestedImageCount} 张，补充请求 ${responseJsons.length - 1} 次`);
       }
       if (signal?.aborted) {
         await deleteStoredFilesIfUnreferenced(savedImages.map((image) => image.file.path));
         throw new Error("图片任务已取消");
       }
-      return { provider, responseJson, savedImages, attemptNo: attempt, retryCount, maxAttempts };
+      const combinedResponseJson = responseJsons.length === 1 ? responseJsons[0] : { batch_responses: responseJsons };
+      return { provider, responseJson: combinedResponseJson, savedImages, attemptNo: attempt, retryCount, maxAttempts };
     } catch (error) {
       if (providerRequestWasCancelled(error, signal)) throw error;
       if (attempt < maxAttempts) {
