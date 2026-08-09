@@ -151,7 +151,15 @@ function enabledProviderRows() {
 
 export function enabledProvidersForCurrentMode() {
   const settings = imageGenerationSettings();
-  return sortProvidersForRuntime(enabledProviderRows().filter((provider) => providerMatchesImageMode(provider, settings)));
+  const enabledBillingModels = new Set(
+    getAll<{ model: string }>(configDb, "select model from billing_model_prices where enabled = 1")
+      .map((row) => String(row.model ?? "").trim())
+      .filter(Boolean)
+  );
+  return sortProvidersForRuntime(enabledProviderRows().filter((provider) => (
+    providerMatchesImageMode(provider, settings)
+    && enabledBillingModels.has(String(provider.model ?? "").trim())
+  )));
 }
 
 export function providerChainById(id?: string) {

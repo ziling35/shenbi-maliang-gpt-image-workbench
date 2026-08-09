@@ -865,68 +865,66 @@ export function ChatComposer({
           {promptTemplateTyping ? <div className="composer-textarea-typewriter" ref={promptTemplateTypewriterRef} aria-hidden="true">{promptTemplateTypedText}</div> : null}
         </div>
         <div className="composer-actions">
-          <div className="composer-quick-wrap" ref={quickMenuRef}>
-            <button
-              type="button"
-              className="composer-tool-btn"
-              aria-label={t("composer.addMenu")}
-              aria-expanded={quickMenuOpen}
-              data-tooltip={t("composer.addMenu")}
-              onClick={openQuickMenuFromPlus}
-            >
-              <Plus size={24} strokeWidth={2} />
-            </button>
-            {quickMenuOpen ? (
-              <div
-                className={cx("composer-quick-menu", quickMenuSource === "slash" && "is-slash")}
-                style={quickMenuSource === "slash" && slashMenuPosition ? slashMenuPosition : undefined}
-                role="menu"
-                aria-label={t("composer.quickOptions")}
+          <div className="composer-action-row composer-action-primary">
+            <div className="composer-quick-wrap" ref={quickMenuRef}>
+              <button
+                type="button"
+                className="composer-tool-btn"
+                aria-label={t("composer.addMenu")}
+                aria-expanded={quickMenuOpen}
+                data-tooltip={t("composer.addMenu")}
+                onClick={openQuickMenuFromPlus}
               >
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={cx(quickMenuActiveIndex === 0 && "active")}
-                  aria-current={quickMenuActiveIndex === 0 ? "true" : undefined}
-                  onMouseEnter={() => setQuickMenuActiveIndex(0)}
-                  onFocus={() => setQuickMenuActiveIndex(0)}
-                  onClick={openMaterialPickerFromMenu}
+                <Plus size={24} strokeWidth={2} />
+              </button>
+              {quickMenuOpen ? (
+                <div
+                  className={cx("composer-quick-menu", quickMenuSource === "slash" && "is-slash")}
+                  style={quickMenuSource === "slash" && slashMenuPosition ? slashMenuPosition : undefined}
+                  role="menu"
+                  aria-label={t("composer.quickOptions")}
                 >
-                  <ImageIcon size={17} />
-                  <strong>{t("composer.assets")}</strong>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={cx(quickMenuActiveIndex === 1 && "active")}
-                  aria-current={quickMenuActiveIndex === 1 ? "true" : undefined}
-                  onMouseEnter={() => setQuickMenuActiveIndex(1)}
-                  onFocus={() => setQuickMenuActiveIndex(1)}
-                  onClick={openCasePickerFromMenu}
-                >
-                  <Lightbulb size={17} />
-                  <strong>{t("composer.inspiration")}</strong>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={cx(quickMenuActiveIndex === 2 && "active")}
-                  aria-current={quickMenuActiveIndex === 2 ? "true" : undefined}
-                  onMouseEnter={() => setQuickMenuActiveIndex(2)}
-                  onFocus={() => setQuickMenuActiveIndex(2)}
-                  onClick={openPromptTemplateFromMenu}
-                >
-                  <Sparkles size={17} />
-                  <strong>{t("composer.promptTemplates")}</strong>
-                </button>
-              </div>
-            ) : null}
+                  <button type="button" role="menuitem" className={cx(quickMenuActiveIndex === 0 && "active")} aria-current={quickMenuActiveIndex === 0 ? "true" : undefined} onMouseEnter={() => setQuickMenuActiveIndex(0)} onFocus={() => setQuickMenuActiveIndex(0)} onClick={openMaterialPickerFromMenu}>
+                    <ImageIcon size={17} /><strong>{t("composer.assets")}</strong>
+                  </button>
+                  <button type="button" role="menuitem" className={cx(quickMenuActiveIndex === 1 && "active")} aria-current={quickMenuActiveIndex === 1 ? "true" : undefined} onMouseEnter={() => setQuickMenuActiveIndex(1)} onFocus={() => setQuickMenuActiveIndex(1)} onClick={openCasePickerFromMenu}>
+                    <Lightbulb size={17} /><strong>{t("composer.inspiration")}</strong>
+                  </button>
+                  <button type="button" role="menuitem" className={cx(quickMenuActiveIndex === 2 && "active")} aria-current={quickMenuActiveIndex === 2 ? "true" : undefined} onMouseEnter={() => setQuickMenuActiveIndex(2)} onFocus={() => setQuickMenuActiveIndex(2)} onClick={openPromptTemplateFromMenu}>
+                    <Sparkles size={17} /><strong>{t("composer.promptTemplates")}</strong>
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <ModelPicker value={imageModelValue} options={imageModelOptions} onChange={onImageModelChange} kind="image" />
+            <SizePicker value={size} options={sizeOptions} onChange={onSizeChange} />
+            <QualityPicker value={quality} options={qualityOptions} onChange={onQualityChange} />
+            <ImageCountStepper value={imageCount} onChange={onImageCountChange} />
+            <span className="composer-action-spacer" />
+            {busy && onCancel ? (
+              <button
+                className="send-btn is-cancel"
+                type="button"
+                disabled={cancelPending}
+                onClick={onCancel}
+                aria-label={cancelPending ? t("composer.cancelling") : t("composer.cancelGeneration")}
+                data-tooltip={t("composer.cancelGeneration")}
+              >
+                {cancelPending ? <LoaderCircle size={19} className="spin" /> : <Square size={14} fill="currentColor" />}
+              </button>
+            ) : (
+              <button
+                className="send-btn"
+                disabled={promptOptimizationLoading || !draftPrompt.trim()}
+                aria-label={t("composer.send")}
+                data-tooltip={t("composer.send")}
+              >
+                <ArrowUp size={22} />
+              </button>
+            )}
           </div>
-          <ModelPicker value={imageModelValue} options={imageModelOptions} onChange={onImageModelChange} kind="image" />
-          <SizePicker value={size} options={sizeOptions} onChange={onSizeChange} />
-          <QualityPicker value={quality} options={qualityOptions} onChange={onQualityChange} />
-          <ImageCountStepper value={imageCount} onChange={onImageCountChange} />
-          <span className="composer-prompt-template-style-tooltip composer-prompt-template-color-control" data-tooltip={t("settings.personalization.colorSchemes.title")}>
+          <div className="composer-action-row composer-action-secondary">
+            <span className="composer-prompt-template-style-tooltip composer-prompt-template-color-control" data-tooltip={t("settings.personalization.colorSchemes.title")}>
             <PromptColorSchemeSelect
               value={normalizedPromptColorSchemeIds}
               schemes={promptColorSchemes}
@@ -1007,30 +1005,10 @@ export function ChatComposer({
                 </button>
               </>
               ) : null}
-          </span>
-          {estimatedCostLabel ? <span className="composer-estimated-cost">{estimatedCostLabel}</span> : null}
-          <span className="composer-action-spacer" />
-          {busy && onCancel ? (
-            <button
-              className="send-btn is-cancel"
-              type="button"
-              disabled={cancelPending}
-              onClick={onCancel}
-              aria-label={cancelPending ? t("composer.cancelling") : t("composer.cancelGeneration")}
-              data-tooltip={t("composer.cancelGeneration")}
-            >
-              {cancelPending ? <LoaderCircle size={19} className="spin" /> : <Square size={14} fill="currentColor" />}
-            </button>
-          ) : (
-            <button
-              className="send-btn"
-              disabled={promptOptimizationLoading || !draftPrompt.trim()}
-              aria-label={t("composer.send")}
-              data-tooltip={t("composer.send")}
-            >
-              <ArrowUp size={22} />
-            </button>
-          )}
+            </span>
+            <span className="composer-action-spacer" />
+            {estimatedCostLabel ? <span className="composer-estimated-cost">{estimatedCostLabel}</span> : null}
+          </div>
         </div>
       </form>
       <MaterialPickerDrawer

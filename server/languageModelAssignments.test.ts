@@ -126,13 +126,13 @@ describe("language model assignment validation", () => {
     ];
 
     expect(selectableLanguageModelProviderFromRows(selectableProviders, "enabled", "default-model")?.model).toBe("default-model");
-    expect(selectableLanguageModelProviderFromRows(selectableProviders, "enabled", "alternate-model")?.model).toBe("alternate-model");
+    expect(selectableLanguageModelProviderFromRows(selectableProviders, "enabled", "alternate-model")).toBeNull();
     expect(selectableLanguageModelProviderFromRows(selectableProviders, "enabled", "unknown-model")).toBeNull();
     expect(selectableLanguageModelProviderFromRows(selectableProviders, "disabled", "disabled-model")).toBeNull();
     expect(selectableLanguageModelProviderFromRows(selectableProviders, "missing", "default-model")).toBeNull();
   });
 
-  test("ignores invalid provider model catalogs", () => {
+  test("does not treat discovered provider catalogs as an allowlist", () => {
     const invalidCatalogProvider = provider({ id: "invalid", name: "Invalid", model: "default-model", models_json: "not-json" });
     expect(selectableLanguageModelProviderFromRows([invalidCatalogProvider], "invalid", "default-model")?.model).toBe("default-model");
     expect(selectableLanguageModelProviderFromRows([invalidCatalogProvider], "invalid", "alternate-model")).toBeNull();
