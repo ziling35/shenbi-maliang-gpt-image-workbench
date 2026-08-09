@@ -508,6 +508,7 @@
 .config-card {
   padding: 20px;
 }
+.billing-config-panel{padding-bottom:72px}.billing-price-list{display:grid;gap:10px}.billing-price-row{display:grid;grid-template-columns:minmax(220px,1fr) 150px auto 40px;gap:10px;align-items:center}.billing-price-row>input,.billing-config-grid input,.billing-adjust-row input{height:42px;border:1px solid var(--app-border);border-radius:8px;background:var(--app-surface);color:var(--app-text);padding:0 11px}.billing-price-row>label{display:flex;align-items:center;gap:6px}.billing-config-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.billing-config-grid label{display:grid;gap:7px}.billing-user-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:14px}.billing-user-list button{display:flex;align-items:center;justify-content:space-between;border:1px solid var(--app-border);border-radius:8px;background:transparent;color:inherit;padding:10px;text-align:left}.billing-user-list button.active{border-color:var(--app-text);background:var(--button-default-bg)}.billing-user-list span{display:grid}.billing-user-list small{color:var(--app-muted)}.billing-adjust-row{display:grid;grid-template-columns:minmax(220px,1fr) 180px auto;gap:10px}.billing-config-save{position:fixed;right:28px;bottom:24px;z-index:5}@media(max-width:760px){.billing-price-row,.billing-config-grid,.billing-adjust-row{grid-template-columns:1fr}.billing-config-save{position:static}}
 
 .prompt-optimizer-summary {
   display: flex;

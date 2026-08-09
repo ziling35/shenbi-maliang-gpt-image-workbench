@@ -43,6 +43,7 @@ export type User = {
   appearanceMode: AppearanceMode;
   preferences: UserPreferences;
   hasConfigAccess: boolean;
+  balanceCents: number;
 };
 
 export type AvatarHistoryEntry = {

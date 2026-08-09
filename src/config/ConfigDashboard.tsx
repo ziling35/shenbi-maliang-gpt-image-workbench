@@ -31,6 +31,7 @@ import { AccountSearchPanel, TeamAccountPanel } from "./panels/members";
 import { ChangelogPanel, StatisticsPanel } from "./panels/overview";
 import { ImageTaskSoundManagementPanel } from "./panels/sounds";
 import { AuditPanel, BackupPanel, BrandingSettingsPanel, DebugSettingsPanel, ModelRequestLogsPanel, ProxyPanel, RequestLogsPanel, SmsSettingsPanel, SmtpSettingsPanel } from "./panels/system";
+import { BillingSettingsPanel } from "./panels/billing";
 
 function configNavLabelKey(value: ConfigTabValue) {
   return `config.nav.${value}`;
@@ -218,6 +219,9 @@ export function ConfigDashboard() {
         </Tabs.Content>
         <Tabs.Content value="audit">
           <AuditPanel />
+        </Tabs.Content>
+        <Tabs.Content value="billing">
+          <BillingSettingsPanel />
         </Tabs.Content>
       </main>
     </Tabs.Root>

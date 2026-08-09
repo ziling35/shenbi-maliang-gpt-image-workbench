@@ -333,6 +333,7 @@ export function publicUser(row: UserRow) {
     avatarUrl: row.avatar_path ? `/api/files/user-avatar/${encodeURIComponent(row.id)}?v=${encodeURIComponent(avatarVersion)}` : "",
     appearanceMode: normalizeAppearanceMode(row.appearance_mode),
     preferences: userPreferences(row.id),
-    hasConfigAccess: Boolean(row.has_config_access)
+    hasConfigAccess: Boolean(row.has_config_access),
+    balanceCents: Number(row.balance_cents ?? 0)
   };
 }

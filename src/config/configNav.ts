@@ -33,6 +33,7 @@ import {
   Users,
   Volume2,
   WandSparkles
+  ,WalletCards
 } from "lucide-react";
 
 export const CONFIG_TAB_STORAGE_KEY = "gpt-image.config.activeTab";
@@ -62,6 +63,7 @@ export const CONFIG_TAB_VALUES = [
   "modelLogs",
   "requests",
   "audit"
+  ,"billing"
 ] as const;
 
 export type ConfigTabValue = (typeof CONFIG_TAB_VALUES)[number];
@@ -97,6 +99,7 @@ export const CONFIG_NAV_ITEMS: ConfigNavItem[] = [
   { value: "modelLogs", label: "模型日志", Icon: Bot },
   { value: "requests", label: "请求日志", Icon: Activity },
   { value: "audit", label: "审计", Icon: Database }
+  ,{ value: "billing", label: "商业化", Icon: WalletCards }
 ];
 
 export const CONFIG_NAV_CATEGORIES: Array<{
@@ -108,7 +111,7 @@ export const CONFIG_NAV_CATEGORIES: Array<{
   { value: "members", label: "组织", items: ["users", "teams"] },
   { value: "content", label: "内容", items: ["contentCategories", "soundManagement", "assetReviews", "caseReviews", "starterCopy", "changelog"] },
   { value: "generation", label: "生成", items: ["imageAccounts", "providers", "promptOptimizer", "safetyReview", "imageMode", "cpa"] },
-  { value: "system", label: "系统", items: ["branding", "smtp", "sms", "backup", "proxy", "debug", "modelLogs", "requests", "audit"] }
+  { value: "system", label: "系统", items: ["billing", "branding", "smtp", "sms", "backup", "proxy", "debug", "modelLogs", "requests", "audit"] }
 ];
 
 export function isConfigTabValue(value: string | null | undefined): value is ConfigTabValue {

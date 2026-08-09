@@ -116,6 +116,7 @@ import { registrationSettings, saveRegistrationSettings } from "./registrationSe
 import { deleteUserAccount } from "./userDeletion";
 import { registerInternalDistributionRoutes } from "./internalDistributionRoutes";
 import { registerSiteSettingsRoutes } from "./siteSettingsRoutes";
+import { registerBillingRoutes } from "./billing";
 
 initAppDb();
 initConfigDb();
@@ -128,6 +129,7 @@ await migrateEncryptedImageTaskSounds();
 await migrateLegacyImageTaskSounds();
 
 const api = new Hono();
+registerBillingRoutes(api);
 
 function apiErrorMessage(error: unknown, fallback = "服务异常") {
   if (error instanceof Error && error.message.trim()) return error.message;

@@ -68,6 +68,7 @@ import {
 import { requireUser } from "./auth";
 import { requireImageRouteUser } from "./externalMcpAuth";
 import { markProviderRequestPostProcessFailure } from "./auditLog";
+import { reserveImageCharge } from "./billing";
 import {
   deleteImageRecords,
   deleteImageRecordsBatch,
@@ -1481,6 +1482,16 @@ function startStoredImageJob(job: StoredImageJobRow, trigger: StoredImageJobTrig
       );
   if (Number(claim.changes ?? 0) === 0) throw new ImageJobClaimError("任务状态已变化");
 
+  if (trigger === "manual") {
+    const requestedImageCount = numberFromPayload(requestPayload.n, 1);
+    try {
+      reserveImageCharge(job.user_id, job.id, provider.model, requestedImageCount, `${job.id}:retry:${nextManualRetryCount}`);
+    } catch (error) {
+      run(appDb, "update image_jobs set status = 'failed', error = ?, updated_at = ? where id = ? and status = 'running'", errorMessage(error, "计费失败"), now(), job.id);
+      throw error;
+    }
+  }
+
   emitJobStatus(job.user_id, retrySessionId, job.id, "running", job.type);
   const runningJob = getOne<StoredImageJobRow>(appDb, "select * from image_jobs where id = ?", job.id);
   const executionController = beginImageJobExecution(job.id);
@@ -1975,6 +1986,14 @@ api.post("/images/generate", async (c) => {
     timestamp,
     timestamp
   );
+  try {
+    reserveImageCharge(user.id, jobId, provider.model, imageCount);
+  } catch (error) {
+    run(appDb, "delete from image_jobs where id = ?", jobId);
+    await deleteImageJobArtifacts(user.id, jobId, clientRequestId);
+    deleteRequestEmptySessionRecord(user.id, sessionId, clientRequestId);
+    return c.json({ error: errorMessage(error, "计费失败") }, 402);
+  }
   emitJobStatus(user.id, sessionId, jobId, "running", "generation");
   recordCasePromptUsage({
     caseItemId,
@@ -2289,6 +2308,7 @@ api.post("/images/edit", async (c) => {
     ...(webConversationContext ? { webConversationContext } : {})
   };
   const maxAutoRetries = resolveImageResultRetryCount(imageGenerationSettings().resultRetryCount);
+
   const debugArtifacts = maskDataUrl
     ? await saveImageEditMaskDebugArtifacts({
         jobId,
@@ -2419,6 +2439,14 @@ api.post("/images/edit", async (c) => {
     timestamp,
     timestamp
   );
+  try {
+    reserveImageCharge(user.id, jobId, provider.model, imageCount);
+  } catch (error) {
+    run(appDb, "delete from image_jobs where id = ?", jobId);
+    await deleteImageJobArtifacts(user.id, jobId, clientRequestId);
+    deleteRequestEmptySessionRecord(user.id, sessionId, clientRequestId);
+    return c.json({ error: errorMessage(error, "计费失败") }, 402);
+  }
   emitJobStatus(user.id, sessionId, jobId, "running", "edit");
   recordCasePromptUsage({
     caseItemId,

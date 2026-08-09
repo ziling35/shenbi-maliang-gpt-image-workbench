@@ -3,7 +3,7 @@ import type { CSSProperties, FocusEvent, FormEvent, MouseEvent, PointerEvent as 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
-import { Camera, ChevronRight, CircleHelp, FolderOpen, Images, Lightbulb, LogOut, Menu, MessageCircle, MessageCirclePlus, PanelLeft, Pin, PinOff, RotateCcw, Search, Settings, ShieldCheck, Sparkles, X } from "lucide-react";
+import { Camera, ChevronRight, CircleHelp, FolderOpen, Images, Lightbulb, LogOut, Menu, MessageCircle, MessageCirclePlus, PanelLeft, Pin, PinOff, RotateCcw, Search, Settings, ShieldCheck, Sparkles, WalletCards, X } from "lucide-react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { languagePreferenceLabel, useI18n, type LocaleCode, type Translate } from "../i18n";
@@ -30,6 +30,7 @@ import {
 import { imageTaskBrowserNotificationPath } from "../lib/imageTaskBrowserNotifications";
 import { cursorLibraryQueryOptions } from "../hooks/useCursorLibraryQuery";
 import { ProjectLogo } from "./ProjectLogo";
+import { BillingDialog } from "./BillingDialog";
 import { SearchChatModal } from "./SearchChatModal";
 import { ArchivedChatsDialog } from "./settings/ArchivedChatsDialog";
 import { AppSettingsDialog } from "./settings/AppSettingsDialog";
@@ -434,6 +435,16 @@ export function WorkbenchShell({ user }: { user: User }) {
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [deleteAccountConfirmOpen, setDeleteAccountConfirmOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [billingOpen, setBillingOpen] = useState(false);
+  const billingAccount = useQuery({ queryKey: ["billing-account"], queryFn: api.billingAccount, enabled: userCardOpen || billingOpen });
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("payment") !== "return") return;
+    setBillingOpen(true);
+    queryClient.invalidateQueries({ queryKey: ["billing-account"] });
+    params.delete("payment");
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : "" }, { replace: true });
+  }, [location.pathname, location.search, navigate, queryClient]);
   const [archivedChatsOpen, setArchivedChatsOpen] = useState(false);
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
   const [topSessionMenuOpen, setTopSessionMenuOpen] = useState(false);
@@ -1924,6 +1935,10 @@ export function WorkbenchShell({ user }: { user: User }) {
                 <Settings size={16} />
                 <span>{t("sidebar.settings")}</span>
               </button>
+              <button className="user-info-action" type="button" onClick={() => { closeUserCard(); setBillingOpen(true); }}>
+                <WalletCards size={16} />
+                <span>余额 ¥{((billingAccount.data?.balanceCents ?? user.balanceCents) / 100).toFixed(2)}</span>
+              </button>
               {user.hasConfigAccess ? (
                 <button
                   className="user-info-action"
@@ -1962,6 +1977,7 @@ export function WorkbenchShell({ user }: { user: User }) {
           ) : null}
         </div>
       </aside>
+      <BillingDialog open={billingOpen} onClose={() => setBillingOpen(false)} />
       {sidebarFloatingTip
         ? createPortal(
             <div

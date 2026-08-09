@@ -11,6 +11,7 @@ export type UserRow = {
   appearance_mode: string;
   disabled: number;
   has_config_access: number;
+  balance_cents: number;
   email_verified_at: string | null;
   phone_verified_at: string | null;
   last_login_at: string | null;

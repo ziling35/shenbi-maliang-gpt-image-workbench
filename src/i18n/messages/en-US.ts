@@ -70,6 +70,7 @@ const messages: Messages = {
   "config.nav.system": "System",
   "config.nav.statistics": "Statistics",
   "config.nav.users": "Users",
+  "config.nav.billing": "Billing",
   "config.nav.teams": "Teams",
   "config.nav.contentCategories": "Category management",
   "config.nav.soundManagement": "Sound management",

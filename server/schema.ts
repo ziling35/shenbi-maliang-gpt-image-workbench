@@ -613,6 +613,23 @@ export function initAppDb() {
   if (!tableColumnExists(appDb, "users", "appearance_mode")) {
     appDb.run("alter table users add column appearance_mode text not null default 'system'");
   }
+  if (!tableColumnExists(appDb, "users", "balance_cents")) {
+    appDb.run("alter table users add column balance_cents integer not null default 0");
+  }
+  appDb.run(`create table if not exists billing_ledger (
+    id text primary key, user_id text not null, type text not null, amount_cents integer not null,
+    balance_after_cents integer not null, reference_id text not null default '', description text not null default '', created_at text not null
+  )`);
+  appDb.run("drop index if exists billing_ledger_type_reference_idx");
+  appDb.run("create index if not exists billing_ledger_reference_idx on billing_ledger(reference_id, created_at)");
+  appDb.run(`create table if not exists billing_reservations (
+    job_id text primary key, user_id text not null, model text not null, image_count integer not null,
+    amount_cents integer not null, status text not null default 'reserved', created_at text not null, updated_at text not null
+  )`);
+  appDb.run(`create table if not exists recharge_orders (
+    id text primary key, user_id text not null, amount_cents integer not null, status text not null default 'pending',
+    payment_type text not null default 'alipay', trade_no text not null default '', created_at text not null, paid_at text, updated_at text not null
+  )`);
   run(
     appDb,
     "update users set appearance_mode = 'system' where appearance_mode not in ('system', 'dark', 'light', 'maliang', 'chunyu')"
@@ -936,6 +953,19 @@ export function initAppDb() {
   }
   appDb.run("create index if not exists image_jobs_user_client_request_idx on image_jobs(user_id, client_request_id)");
   appDb.run("create index if not exists image_jobs_user_updated_idx on image_jobs(user_id, updated_at, id)");
+  appDb.run("drop trigger if exists billing_job_refund");
+  appDb.run("drop trigger if exists billing_job_capture");
+  appDb.run(`create trigger billing_job_refund after update of status on image_jobs
+    when new.status in ('failed','cancelled') and old.status <> new.status
+    begin
+      update users set balance_cents = balance_cents + coalesce((select amount_cents from billing_reservations where job_id = new.id and status = 'reserved'), 0), updated_at = datetime('now') where id = new.user_id;
+      insert or ignore into billing_ledger(id,user_id,type,amount_cents,balance_after_cents,reference_id,description,created_at)
+        select 'refund_' || new.id || '_' || coalesce(new.manual_retry_count,0),new.user_id,'refund',amount_cents,(select balance_cents from users where id=new.user_id),new.id || ':retry:' || coalesce(new.manual_retry_count,0),'图片任务退款',datetime('now') from billing_reservations where job_id=new.id and status='reserved';
+      update billing_reservations set status='refunded',updated_at=datetime('now') where job_id=new.id and status='reserved';
+    end`);
+  appDb.run(`create trigger billing_job_capture after update of status on image_jobs
+    when new.status = 'succeeded' and old.status <> new.status
+    begin update billing_reservations set status='captured',updated_at=datetime('now') where job_id=new.id and status='reserved'; end`);
 
   appDb.run(`
     create table if not exists image_job_cancel_requests (
@@ -1939,6 +1969,14 @@ export function initAppDb() {
 
 export function initConfigDb() {
   configDb.run("PRAGMA journal_mode = MEMORY");
+  configDb.run(`create table if not exists billing_model_prices (
+    model text primary key, price_cents integer not null, enabled integer not null default 1, updated_at text not null
+  )`);
+  configDb.run(`create table if not exists epay_settings (
+    id text primary key, enabled integer not null default 0, api_url text not null default '', merchant_id text not null default '',
+    merchant_key text not null default '', payment_types text not null default 'alipay,wxpay', minimum_recharge_cents integer not null default 100,
+    updated_at text not null
+  )`);
   configDb.run(`
     create table if not exists config_admin (
       id text primary key,

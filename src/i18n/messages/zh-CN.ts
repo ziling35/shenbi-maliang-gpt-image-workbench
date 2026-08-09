@@ -70,6 +70,7 @@ const messages: Messages = {
   "config.nav.system": "系统",
   "config.nav.statistics": "数据统计",
   "config.nav.users": "用户账号",
+  "config.nav.billing": "商业化",
   "config.nav.teams": "团队管理",
   "config.nav.contentCategories": "分类管理",
   "config.nav.soundManagement": "提示音管理",
