@@ -70,6 +70,7 @@ type SubmittedDraftSnapshot = {
   editorReturn: ImageEditorOpenRequest | null;
   selectedCaseMaterials: CaseMaterialItem[];
   selectedAssets: AssetItem[];
+  providerId: string;
   imageCount: number;
   size: string;
   quality: string;
@@ -397,6 +398,7 @@ function emptyComposerSessionDraft(): ComposerSessionDraft {
     draftCaseUsage: null,
     selectedCaseMaterials: [],
     selectedAssets: [],
+    providerId: "",
     imageCount: 1,
     size: "",
     quality: "",
@@ -414,6 +416,7 @@ function hasComposerDraftContent(draft: Pick<
   | "draftCaseUsage"
   | "selectedCaseMaterials"
   | "selectedAssets"
+  | "providerId"
   | "imageCount"
   | "size"
   | "quality"
@@ -427,6 +430,7 @@ function hasComposerDraftContent(draft: Pick<
     || draft.draftCaseUsage
     || draft.selectedCaseMaterials.length > 0
     || draft.selectedAssets.length > 0
+    || draft.providerId
     || draft.imageCount !== 1
     || draft.size
     || draft.quality
@@ -539,6 +543,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   const pendingSubmitScopeRef = useRef<string | null>(pendingSubmitScope);
   const starterPromptOptimizeRequestIdRef = useRef(0);
   const submitSessionByRequestRef = useRef(new Map<string, string>());
+  const submitLaunchLockRef = useRef(new Set<string>());
   const retryInFlightJobIdsRef = useRef(new Set<string>());
   const submitAbortControllersRef = useRef(new Map<string, AbortController>());
   const cancelledSubmitIdsRef = useRef(new Set<string>());
@@ -659,7 +664,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   const estimatedCostLabel = currentModelPriceCents === null
     ? currentProvider?.virtual ? "费用按实际路由模型结算" : "该模型尚未配置价格"
     : `预计扣费 ¥${((currentModelPriceCents * imageCount) / 100).toFixed(2)}`;
-  const composerScopeKey = sessionId ? `session:${sessionId}` : COMPOSER_NEW_DRAFT_SCOPE_KEY;
+  const composerScopeKey = sessionId ? `user:${user.id}:session:${sessionId}` : COMPOSER_NEW_DRAFT_SCOPE_KEY;
   const composerInstanceKey = sessionId ? composerScopeKey : `${COMPOSER_NEW_DRAFT_SCOPE_KEY}:${newChatResetKey}`;
   const currentComposerDraft = composerDrafts[composerScopeKey] ?? null;
   const currentPromptTemplateDraft = composerDrafts[composerScopeKey]?.promptTemplate ?? null;
@@ -972,6 +977,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     },
     onSettled: (_result, _error, request) => {
       cancelledSubmitIdsRef.current.delete(request.clientRequestId);
+      submitLaunchLockRef.current.delete(request.pendingScope);
     }
   });
   const createShareLink = useMutation({
@@ -1001,6 +1007,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     editorReturn: null,
     selectedCaseMaterials: [...selectedCaseMaterials],
     selectedAssets: [...selectedAssets],
+    providerId,
     imageCount,
     size,
     quality,
@@ -1017,6 +1024,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     setEditImage(restoringEditor ? null : snapshot.editImage);
     setSelectedCaseMaterials(snapshot.selectedCaseMaterials);
     setSelectedAssets(snapshot.selectedAssets);
+    setProviderId(snapshot.providerId);
     setImageCount(snapshot.imageCount);
     setSize(snapshot.size);
     setQuality(snapshot.quality);
@@ -1026,6 +1034,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       draftCaseUsage: restoringEditor ? null : snapshot.caseUsage,
       selectedCaseMaterials: snapshot.selectedCaseMaterials,
       selectedAssets: persistableAssets(snapshot.selectedAssets),
+      providerId: snapshot.providerId,
       imageCount: snapshot.imageCount,
       size: snapshot.size,
       quality: snapshot.quality,
@@ -1048,6 +1057,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       draftCaseUsage,
       selectedCaseMaterials,
       selectedAssets: persistableAssets(selectedAssets),
+      providerId,
       imageCount,
       size,
       quality,
@@ -1059,6 +1069,8 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     });
   };
   const startTrackedSubmit = (request: SubmitRequest, snapshot: SubmittedDraftSnapshot) => {
+    if (submitLaunchLockRef.current.has(request.pendingScope)) return;
+    submitLaunchLockRef.current.add(request.pendingScope);
     setActiveSubmitCancellation({
       clientRequestId: request.clientRequestId,
       pendingScope: request.pendingScope,
@@ -1466,6 +1478,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         role: "user",
         content: prompt,
         metadata: {
+          clientRequestId,
           mode,
           pending: true,
           sourceImageIds: requestSourceImage ? [requestSourceImage.id] : [],
@@ -1723,6 +1736,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       draftCaseUsage,
       selectedCaseMaterials,
       selectedAssets: draftSelectedAssets,
+      providerId,
       imageCount,
       size,
       quality,
@@ -1746,6 +1760,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     setDraftPrompt(nextDraft.draftPrompt, nextDraft.draftCaseUsage);
     setSelectedCaseMaterials(nextDraft.selectedCaseMaterials);
     setSelectedAssets(persistableAssets(nextDraft.selectedAssets));
+    setProviderId(nextDraft.providerId);
     setImageCount(nextDraft.imageCount);
     setSize(nextDraft.size);
     setQuality(nextDraft.quality);
@@ -1773,6 +1788,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       draftCaseUsage,
       selectedCaseMaterials,
       selectedAssets: persistableAssets(selectedAssets),
+      providerId,
       imageCount,
       size,
       quality,
@@ -1791,6 +1807,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     editorImageRequest?.discardDraftOnClose,
     imageEditor,
     imageCount,
+    providerId,
     quality,
     selectedAssets,
     selectedCaseMaterials,
@@ -1868,6 +1885,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         role: "user",
         content: trimmedPrompt,
         metadata: {
+          clientRequestId,
           mode: "edit",
           pending: true,
           sourceImageIds: [image.id],
@@ -2046,6 +2064,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         role: "user",
         content: trimmedPrompt,
         metadata: {
+          clientRequestId,
           mode,
           pending: true,
           revisionRootId: payload.rootId,

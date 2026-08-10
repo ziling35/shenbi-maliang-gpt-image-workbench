@@ -309,7 +309,7 @@ describe("external MCP authorization page", () => {
     expect(html).not.toContain(".then(complete");
     expect(html).not.toContain("Codex &lt;test&gt;");
     expect(html).not.toContain("连接已安全建立");
-    expect(html).toContain('href="/" data-success-action hidden>返回神笔马良</a>');
+    expect(html).toContain('href="/" data-success-action hidden>返回灵图AI</a>');
     expect(html).toContain("action.hidden = false");
     expect(html).not.toContain("连接完成");
     expect(html).not.toContain("Authorization successful");

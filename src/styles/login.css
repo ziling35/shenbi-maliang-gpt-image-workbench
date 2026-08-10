@@ -8,49 +8,43 @@
     linear-gradient(180deg, rgba(255, 253, 247, 0.10), transparent 36%);
   --login-panel-text: #172033;
   --login-title-shadow: 0 12px 24px rgba(87, 74, 56, 0.12);
-  --login-field-border: rgba(156, 123, 58, 0.34);
-  --login-field-border-focus: rgba(156, 123, 58, 0.68);
-  --login-field-bg: rgba(255, 253, 248, 0.20);
-  --login-field-bg-focus: rgba(255, 253, 248, 0.30);
-  --login-autofill-bg: rgba(255, 253, 248, 0.30);
+  --login-field-border: rgba(148, 163, 184, 0.46);
+  --login-field-border-focus: rgba(37, 99, 235, 0.78);
+  --login-field-bg: rgba(248, 250, 252, 0.96);
+  --login-field-bg-focus: #ffffff;
+  --login-autofill-bg: #ffffff;
   --login-field-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.45),
-    0 10px 22px rgba(118, 94, 55, 0.06);
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 22px rgba(15, 23, 42, 0.06);
   --login-field-shadow-focus:
-    0 0 0 3px rgba(188, 155, 89, 0.10),
-    0 12px 26px rgba(118, 94, 55, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.58);
-  --login-icon-color: #9c7b3a;
-  --login-input-color: #7d5f2b;
-  --login-input-text-shadow: 0 1px 0 rgba(255, 253, 244, 0.72);
-  --login-input-selection-bg: rgba(188, 155, 89, 0.22);
-  --login-password-dot-color: #9c7b3a;
-  --login-placeholder-color: rgba(123, 96, 46, 0.54);
-  --login-muted-color: rgba(123, 96, 46, 0.72);
-  --login-muted-hover-color: #7b602e;
-  --login-check-color: #8c6b2f;
-  --login-button-color: #7d5f2b;
-  --login-button-hover-color: #6f5220;
-  --login-button-bg:
-    linear-gradient(180deg, rgba(255, 253, 248, 0.31), rgba(255, 253, 248, 0.18)),
-    var(--login-field-bg);
-  --login-button-hover-bg:
-    linear-gradient(180deg, rgba(255, 253, 248, 0.40), rgba(255, 253, 248, 0.24)),
-    var(--login-field-bg-focus);
-  --login-button-text-shadow: 0 1px 0 rgba(255, 253, 244, 0.72);
-  --login-error-color: rgba(123, 96, 46, 0.82);
-  --login-error-bg:
-    linear-gradient(180deg, rgba(255, 253, 248, 0.25), rgba(255, 253, 248, 0.14)),
-    var(--login-field-bg);
-  --login-soft-hover-bg: rgba(156, 123, 58, 0.08);
-  --login-focus-ring: rgba(188, 155, 89, 0.10);
-  --login-switch-bg: rgba(255, 253, 248, 0.20);
-  --login-switch-border: rgba(156, 123, 58, 0.28);
-  --login-switch-color: rgba(123, 96, 46, 0.70);
-  --login-switch-hover-color: #7b602e;
-  --login-switch-active-bg: rgba(255, 253, 248, 0.42);
-  --login-switch-active-color: #6f5220;
-  --login-switch-shadow: 0 12px 26px rgba(118, 94, 55, 0.10);
+    0 0 0 4px rgba(37, 99, 235, 0.13),
+    0 12px 28px rgba(15, 23, 42, 0.09),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+  --login-icon-color: #64748b;
+  --login-input-color: #172033;
+  --login-input-text-shadow: none;
+  --login-input-selection-bg: rgba(37, 99, 235, 0.18);
+  --login-password-dot-color: #172033;
+  --login-placeholder-color: #94a3b8;
+  --login-muted-color: #64748b;
+  --login-muted-hover-color: #1d4ed8;
+  --login-check-color: #2563eb;
+  --login-button-color: #ffffff;
+  --login-button-hover-color: #ffffff;
+  --login-button-bg: linear-gradient(135deg, #2563eb, #1d4ed8);
+  --login-button-hover-bg: linear-gradient(135deg, #1d4ed8, #1e40af);
+  --login-button-text-shadow: none;
+  --login-error-color: #b42318;
+  --login-error-bg: #fff1f2;
+  --login-soft-hover-bg: rgba(37, 99, 235, 0.08);
+  --login-focus-ring: rgba(37, 99, 235, 0.13);
+  --login-switch-bg: #eef2f7;
+  --login-switch-border: #dbe3ed;
+  --login-switch-color: #64748b;
+  --login-switch-hover-color: #1d4ed8;
+  --login-switch-active-bg: #ffffff;
+  --login-switch-active-color: #172033;
+  --login-switch-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
   position: relative;
   isolation: isolate;
   overflow: hidden;
@@ -79,49 +73,43 @@
     linear-gradient(180deg, rgba(8, 22, 39, 0.12), transparent 36%);
   --login-panel-text: #fff7e8;
   --login-title-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
-  --login-field-border: rgba(224, 190, 126, 0.38);
-  --login-field-border-focus: rgba(232, 198, 129, 0.72);
-  --login-field-bg: rgba(20, 31, 41, 0.27);
-  --login-field-bg-focus: rgba(30, 43, 54, 0.38);
-  --login-autofill-bg: rgba(30, 43, 54, 0.38);
+  --login-field-border: rgba(100, 116, 139, 0.62);
+  --login-field-border-focus: rgba(96, 165, 250, 0.82);
+  --login-field-bg: rgba(15, 23, 42, 0.9);
+  --login-field-bg-focus: rgba(22, 34, 54, 0.98);
+  --login-autofill-bg: #162236;
   --login-field-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.12),
     0 14px 30px rgba(0, 0, 0, 0.16);
   --login-field-shadow-focus:
-    0 0 0 3px rgba(232, 198, 129, 0.12),
+    0 0 0 4px rgba(96, 165, 250, 0.16),
     0 16px 34px rgba(0, 0, 0, 0.20),
     inset 0 1px 0 rgba(255, 255, 255, 0.16);
-  --login-icon-color: #e0be7e;
-  --login-input-color: #f6db9b;
-  --login-input-text-shadow: 0 1px 0 rgba(0, 0, 0, 0.42);
-  --login-input-selection-bg: rgba(224, 190, 126, 0.22);
-  --login-password-dot-color: #e0be7e;
-  --login-placeholder-color: rgba(239, 217, 178, 0.58);
-  --login-muted-color: rgba(239, 217, 178, 0.76);
-  --login-muted-hover-color: #fff0c2;
-  --login-check-color: #f1d38e;
-  --login-button-color: #f6db9b;
-  --login-button-hover-color: #fff0c2;
-  --login-button-bg:
-    linear-gradient(180deg, rgba(224, 190, 126, 0.16), rgba(224, 190, 126, 0.07)),
-    var(--login-field-bg);
-  --login-button-hover-bg:
-    linear-gradient(180deg, rgba(224, 190, 126, 0.22), rgba(224, 190, 126, 0.10)),
-    var(--login-field-bg-focus);
-  --login-button-text-shadow: 0 1px 0 rgba(0, 0, 0, 0.42);
-  --login-error-color: rgba(255, 213, 176, 0.86);
-  --login-error-bg:
-    linear-gradient(180deg, rgba(224, 190, 126, 0.14), rgba(224, 190, 126, 0.06)),
-    var(--login-field-bg);
-  --login-soft-hover-bg: rgba(224, 190, 126, 0.10);
-  --login-focus-ring: rgba(232, 198, 129, 0.12);
-  --login-switch-bg: rgba(20, 31, 41, 0.30);
-  --login-switch-border: rgba(224, 190, 126, 0.30);
-  --login-switch-color: rgba(239, 217, 178, 0.76);
-  --login-switch-hover-color: #fff0c2;
-  --login-switch-active-bg: rgba(224, 190, 126, 0.18);
-  --login-switch-active-color: #fff4d2;
-  --login-switch-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+  --login-icon-color: #94a3b8;
+  --login-input-color: #f8fafc;
+  --login-input-text-shadow: none;
+  --login-input-selection-bg: rgba(96, 165, 250, 0.3);
+  --login-password-dot-color: #f8fafc;
+  --login-placeholder-color: #94a3b8;
+  --login-muted-color: #cbd5e1;
+  --login-muted-hover-color: #93c5fd;
+  --login-check-color: #60a5fa;
+  --login-button-color: #ffffff;
+  --login-button-hover-color: #ffffff;
+  --login-button-bg: linear-gradient(135deg, #3b82f6, #2563eb);
+  --login-button-hover-bg: linear-gradient(135deg, #2563eb, #1d4ed8);
+  --login-button-text-shadow: none;
+  --login-error-color: #fecaca;
+  --login-error-bg: rgba(127, 29, 29, 0.35);
+  --login-soft-hover-bg: rgba(96, 165, 250, 0.12);
+  --login-focus-ring: rgba(96, 165, 250, 0.16);
+  --login-switch-bg: rgba(15, 23, 42, 0.88);
+  --login-switch-border: rgba(100, 116, 139, 0.55);
+  --login-switch-color: #cbd5e1;
+  --login-switch-hover-color: #93c5fd;
+  --login-switch-active-bg: #1e293b;
+  --login-switch-active-color: #f8fafc;
+  --login-switch-shadow: 0 14px 30px rgba(0, 0, 0, 0.2);
 }
 
 .login-background-layer {

@@ -2078,7 +2078,7 @@ export function initConfigDb() {
   configDb.run(`
     create table if not exists branding_settings (
       id text primary key,
-      site_name text not null default '神笔马良',
+      site_name text not null default '灵图AI',
       active_logo_asset_id text not null default '',
       active_favicon_asset_id text not null default '',
       active_login_title_light_asset_id text not null default '',
@@ -2134,7 +2134,7 @@ export function initConfigDb() {
       secure integer not null default 1,
       username text not null default '',
       password_secret text not null default '',
-      from_name text not null default '神笔马良',
+      from_name text not null default '灵图AI',
       from_email text not null default '',
       test_recipient_email text not null default '',
       updated_at text not null

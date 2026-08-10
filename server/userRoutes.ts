@@ -9,6 +9,7 @@ import { publicBranding } from "./branding";
 import { enabledProvidersForCurrentMode } from "./providerRuntime";
 import { imageOriginPromptsByImageIds, imageReferencesByImageIds, publicUser, toProvider } from "./serializers";
 import { imageGenerationSettings } from "./settingsStore";
+import { publicSelectableLanguageModels, resolveLanguageModelProvider } from "./languageModelAssignments";
 import { replayImageJobEventsFromDb, streamImageJobEvents } from "./imageJobEvents";
 import { cleanupExpiredImageJobCancelIntents, imageJobCancelRequested } from "./imageJobCancellation";
 import { saveUserPreferences } from "./userPreferences";
@@ -804,9 +805,9 @@ api.post("/auth/config-access", async (c) => {
   return c.json({ ok: true });
 });
 
-api.get("/providers", async (c) => {
-  const user = await requireUser(c);
-  if (!user) return c.json({ error: "未登录" }, 401);
+  api.get("/providers", async (c) => {
+    const user = await requireUser(c);
+    if (!user) return c.json({ error: "未登录" }, 401);
   const settings = imageGenerationSettings();
   const rows = enabledProvidersForCurrentMode();
   const providers = rows.map((row) => toProvider(row, false));
@@ -819,8 +820,48 @@ api.get("/providers", async (c) => {
           virtual: true
         }
       : null;
-  return c.json({ providers: autoProvider ? [autoProvider, ...providers] : providers, imageMode: settings });
-});
+    return c.json({ providers: autoProvider ? [autoProvider, ...providers] : providers, imageMode: settings });
+  });
+
+  api.get("/guest-workbench-config", (c) => {
+    const settings = imageGenerationSettings();
+    const providers = enabledProvidersForCurrentMode().map((provider) => {
+      const publicProvider = toProvider(provider, false);
+      return {
+        id: publicProvider.id,
+        name: publicProvider.name,
+        model: publicProvider.model,
+        channel: publicProvider.channel,
+        sizes: publicProvider.sizes,
+        qualities: publicProvider.qualities,
+        defaultSize: publicProvider.defaultSize,
+        defaultQuality: publicProvider.defaultQuality
+      };
+    });
+    const autoProvider = settings.mode === "auto" && providers.length > 0
+      ? {
+          ...providers[0],
+          id: AUTO_PROVIDER_ID,
+          name: "自动选择",
+          virtual: true
+        }
+      : null;
+    const defaultPromptOptimizer = resolveLanguageModelProvider("prompt.optimize");
+
+    return c.json({
+      providers: autoProvider ? [autoProvider, ...providers] : providers,
+      promptOptimizerModels: {
+        defaultSelection: defaultPromptOptimizer
+          ? {
+              providerId: defaultPromptOptimizer.id,
+              providerName: defaultPromptOptimizer.name,
+              model: defaultPromptOptimizer.model
+            }
+          : null,
+        providers: publicSelectableLanguageModels()
+      }
+    });
+  });
 
 api.get("/sessions", async (c) => {
   const user = await requireUser(c);

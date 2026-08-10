@@ -26,6 +26,7 @@ export type ImageDerivativeSourceGroup = {
 };
 
 type StoredDerivative = {
+  path: string;
   buffer: Buffer;
   mimeType: string;
   size: number;
@@ -148,7 +149,7 @@ async function createDerivative(source: DerivativeSource, variant: Exclude<Image
     height: dimensions.height
   };
   upsertDerivative(source, variant, file);
-  return { buffer, mimeType: file.mimeType, size: file.size, width: file.width, height: file.height };
+  return { path: file.path, buffer, mimeType: file.mimeType, size: file.size, width: file.width, height: file.height };
 }
 
 export async function getOrCreateImageDerivative(source: DerivativeSource, variant: Exclude<ImageVariant, "original">): Promise<StoredDerivative> {
@@ -157,6 +158,7 @@ export async function getOrCreateImageDerivative(source: DerivativeSource, varia
     try {
       const buffer = await readStoredFile(existing.path);
       return {
+        path: existing.path,
         buffer,
         mimeType: existing.mime_type,
         size: existing.size,

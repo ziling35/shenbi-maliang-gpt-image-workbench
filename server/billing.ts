@@ -137,6 +137,26 @@ function creditOrder(orderId: string, tradeNo: string) {
   } catch (error) { appDb.exec("rollback"); throw error; }
 }
 
+function verifyAndCreditEpayOrder(params: Record<string, string>, settings: ReturnType<typeof epaySettings>) {
+  const sign = String(params.sign ?? "");
+  if (!sign || !secureEqual(signEpayParams(params, settings.merchantKey), sign)) throw new Error("支付回调签名验证失败");
+  if (String(params.trade_status) !== "TRADE_SUCCESS") throw new Error("支付状态不是成功");
+  const orderId = String(params.out_trade_no ?? "");
+  const order = getOne<{ amount_cents: number }>(appDb, "select amount_cents from recharge_orders where id = ?", orderId);
+  if (!order) throw new Error("充值订单不存在");
+  if (Math.round(Number(params.money) * 100) !== order.amount_cents) throw new Error("支付金额与订单不一致");
+  if (String(params.pid) !== settings.merchantId) throw new Error("支付商户号不一致");
+  creditOrder(orderId, String(params.trade_no ?? ""));
+  return orderId;
+}
+
+function isPublicPaymentOrigin(origin: string) {
+  const hostname = new URL(origin).hostname.toLowerCase();
+  if (hostname === "localhost" || hostname === "localhost.localdomain" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1" || hostname.endsWith(".local")) return false;
+  const privateIpv4 = /^(10|127)\.(\d{1,3}\.){2}\d{1,3}$|^192\.168\.(\d{1,3}\.)\d{1,3}$|^172\.(1[6-9]|2\d|3[0-1])\.(\d{1,3}\.)\d{1,3}$/;
+  return !privateIpv4.test(hostname);
+}
+
 export function registerBillingRoutes(api: Hono) {
   api.get("/billing/account", async (c) => {
     const user = await requireUser(c); if (!user) return c.json({ error: "未登录" }, 401);
@@ -163,20 +183,37 @@ export function registerBillingRoutes(api: Hono) {
     if (!settings.apiUrl || !settings.merchantId || !settings.merchantKey) return c.json({ error: "易支付配置不完整" }, 400);
     if (!Number.isSafeInteger(amountCents) || amountCents < settings.minimumRechargeCents) return c.json({ error: "充值金额低于最低限制" }, 400);
     if (!settings.paymentTypes.includes(type)) return c.json({ error: "不支持该支付方式" }, 400);
-    const origin = storedSitePublicBaseUrl() || new URL(c.req.url).origin; const orderId = makeId("pay");
+    const origin = storedSitePublicBaseUrl() || new URL(c.req.url).origin;
+    if (!isPublicPaymentOrigin(origin)) return c.json({ error: "充值回调地址不可被易支付服务器访问，请先配置公网 HTTPS 地址（APP_PUBLIC_URL 或后台站点公开地址）" }, 400);
+    const orderId = makeId("pay");
     run(appDb, "insert into recharge_orders(id,user_id,amount_cents,status,payment_type,created_at,updated_at) values(?,?,?,'pending',?,?,?)", orderId, user.id, amountCents, type, now(), now());
-    const params: Record<string,string> = { pid: settings.merchantId, type, out_trade_no: orderId, notify_url: `${origin}/api/billing/epay/notify`, return_url: `${origin}/?payment=return`, name: "账户余额充值", money: (amountCents / 100).toFixed(2), sign_type: "MD5" };
+    const params: Record<string,string> = { pid: settings.merchantId, type, out_trade_no: orderId, notify_url: `${origin}/api/billing/epay/notify`, return_url: `${origin}/api/billing/epay/return`, name: "账户余额充值", money: (amountCents / 100).toFixed(2), sign_type: "MD5" };
     params.sign = signEpayParams(params, settings.merchantKey);
     return c.json({ orderId, paymentUrl: `${settings.apiUrl.replace(/\/$/, "")}/submit.php?${new URLSearchParams(params)}` });
   });
   api.all("/billing/epay/notify", async (c) => {
     const params = c.req.method === "GET" ? Object.fromEntries(new URL(c.req.url).searchParams) : Object.fromEntries(await c.req.parseBody().then((body) => Object.entries(body).map(([k,v]) => [k,String(v)])));
-    const settings = epaySettings(true); const sign = String(params.sign ?? "");
-    if (!sign || !secureEqual(signEpayParams(params, settings.merchantKey), sign)) return c.text("fail", 400);
-    if (String(params.trade_status) !== "TRADE_SUCCESS") return c.text("fail", 400);
-    const order = getOne<{ amount_cents: number }>(appDb, "select amount_cents from recharge_orders where id = ?", String(params.out_trade_no ?? ""));
-    if (!order || Math.round(Number(params.money) * 100) !== order.amount_cents || String(params.pid) !== settings.merchantId) return c.text("fail", 400);
-    creditOrder(String(params.out_trade_no), String(params.trade_no ?? "")); return c.text("success");
+    try {
+      verifyAndCreditEpayOrder(params, epaySettings(true));
+      return c.text("success");
+    } catch (error) {
+      console.warn("易支付异步通知处理失败", error);
+      return c.text("fail", 400);
+    }
+  });
+  api.get("/billing/epay/return", (c) => {
+    const params = Object.fromEntries(new URL(c.req.url).searchParams);
+    const origin = storedSitePublicBaseUrl() || new URL(c.req.url).origin;
+    const redirectParams = new URLSearchParams({ payment: "return" });
+    try {
+      const orderId = verifyAndCreditEpayOrder(params, epaySettings(true));
+      redirectParams.set("paymentStatus", "success");
+      redirectParams.set("orderId", orderId);
+    } catch (error) {
+      console.warn("易支付同步返回处理失败", error);
+      redirectParams.set("paymentStatus", "failed");
+    }
+    return c.redirect(`${origin}/?${redirectParams.toString()}`);
   });
   api.get("/config/billing", (c) => {
     const blocked = requireConfig(c); if (blocked) return blocked;

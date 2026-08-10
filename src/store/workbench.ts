@@ -76,6 +76,7 @@ export type ComposerSessionDraft = {
   draftCaseUsage: DraftCaseUsage | null;
   selectedCaseMaterials: CaseMaterialItem[];
   selectedAssets: AssetItem[];
+  providerId: string;
   imageCount: number;
   size: string;
   quality: string;
@@ -158,6 +159,7 @@ function emptyComposerDraft(): ComposerSessionDraft {
     draftCaseUsage: null,
     selectedCaseMaterials: [],
     selectedAssets: [],
+    providerId: "",
     imageCount: 1,
     size: "",
     quality: "",
@@ -195,6 +197,7 @@ function hasComposerDraftContent(draft: ComposerSessionDraft) {
     || draft.draftCaseUsage
     || draft.selectedCaseMaterials.length > 0
     || draft.selectedAssets.length > 0
+    || draft.providerId
     || draft.imageCount !== 1
     || draft.size
     || draft.quality
@@ -226,7 +229,7 @@ function readComposerDraftsFromStorage(): Record<string, ComposerSessionDraft> {
         newDrafts.push({ key, order: Number(newMatch[1]), draft });
         continue;
       }
-      if (key.startsWith("session:")) normalized[key] = draft;
+      if (key.startsWith("session:") || /^user:[^:]+:session:/.test(key)) normalized[key] = draft;
     }
     const selectedNewDraft = newDrafts
       .sort((left, right) => right.order - left.order)

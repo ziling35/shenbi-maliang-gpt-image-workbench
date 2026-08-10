@@ -117,6 +117,7 @@ import { deleteUserAccount } from "./userDeletion";
 import { registerInternalDistributionRoutes } from "./internalDistributionRoutes";
 import { registerSiteSettingsRoutes } from "./siteSettingsRoutes";
 import { registerBillingRoutes } from "./billing";
+import { registerObjectStorageRoutes } from "./objectStorageRoutes";
 
 initAppDb();
 initConfigDb();
@@ -130,6 +131,7 @@ await migrateLegacyImageTaskSounds();
 
 const api = new Hono();
 registerBillingRoutes(api);
+registerObjectStorageRoutes(api);
 
 function apiErrorMessage(error: unknown, fallback = "服务异常") {
   if (error instanceof Error && error.message.trim()) return error.message;

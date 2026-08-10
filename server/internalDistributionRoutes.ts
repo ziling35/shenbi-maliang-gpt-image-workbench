@@ -44,7 +44,7 @@ export async function readCodexPluginVersion() {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { version?: unknown };
   const version = typeof manifest.version === "string" ? manifest.version.trim() : "";
   if (!SEMVER_PATTERN.test(version)) {
-    throw new Error(`神笔马良插件版本无效：${version || "missing"}`);
+    throw new Error(`灵图AI插件版本无效：${version || "missing"}`);
   }
   return version;
 }
@@ -93,7 +93,7 @@ function noIndex(c: Context) {
 }
 
 function agentInstallInstruction(href: string) {
-  return `访问 ${href}，安装神笔马良。`;
+  return `访问 ${href}，安装灵图AI。`;
 }
 
 function agentExecutionPolicy() {
@@ -245,7 +245,7 @@ function mcpInstallManifest(c: Context) {
   const endpoint = maliangMcpResourceUrl(c);
   return {
     schemaVersion: 1,
-    product: "神笔马良",
+    product: "灵图AI",
     technicalId: "maliang",
     distribution: "internal",
     type: "remote-mcp",
@@ -437,18 +437,18 @@ function runtimeMarketplaceFile(relativePath: string, source: Buffer, publicBase
     };
     const endpoint = `${publicBaseUrl}/api/external-mcp/mcp`;
     const maliang = config.mcpServers?.maliang;
-    if (!maliang) throw new Error("神笔马良插件缺少 maliang MCP 配置");
+    if (!maliang) throw new Error("灵图AI插件缺少 maliang MCP 配置");
     if (maliang.env_http_headers?.["X-Maliang-Device-Name"] !== "COMPUTERNAME") {
-      throw new Error("神笔马良插件缺少 Windows 设备名称请求头配置");
+      throw new Error("灵图AI插件缺少 Windows 设备名称请求头配置");
     }
     if (
       maliang.env_http_headers?.["X-Maliang-Device-Os"] !== "OS"
       || maliang.env_http_headers?.["X-Maliang-Device-Ostype"] !== "OSTYPE"
     ) {
-      throw new Error("神笔马良插件缺少设备类型请求头配置");
+      throw new Error("灵图AI插件缺少设备类型请求头配置");
     }
     if (maliang.default_tools_approval_mode !== "approve") {
-      throw new Error("神笔马良插件远程 MCP 未启用 Codex 批准模式");
+      throw new Error("灵图AI插件远程 MCP 未启用 Codex 批准模式");
     }
     const local = config.mcpServers?.maliang_local;
     if (
@@ -460,7 +460,7 @@ function runtimeMarketplaceFile(relativePath: string, source: Buffer, publicBase
       || local.default_tools_approval_mode !== "approve"
       || local.required !== false
     ) {
-      throw new Error("神笔马良插件缺少 Codex 托管的本地图片上传与保存 MCP");
+      throw new Error("灵图AI插件缺少 Codex 托管的本地图片上传与保存 MCP");
     }
     maliang.oauth_resource = endpoint;
     maliang.url = endpoint;
@@ -469,7 +469,7 @@ function runtimeMarketplaceFile(relativePath: string, source: Buffer, publicBase
   if (relativePath === CODEX_PLUGIN_MANIFEST) {
     const manifest = JSON.parse(source.toString("utf8")) as { homepage?: string; version?: string };
     if (manifest.version !== pluginVersion) {
-      throw new Error(`神笔马良插件版本不一致：模板为 ${manifest.version ?? "missing"}，读取值为 ${pluginVersion}`);
+      throw new Error(`灵图AI插件版本不一致：模板为 ${manifest.version ?? "missing"}，读取值为 ${pluginVersion}`);
     }
     manifest.homepage = `${publicBaseUrl}/plugin`;
     return Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
@@ -482,7 +482,7 @@ function runtimeMarketplaceFile(relativePath: string, source: Buffer, publicBase
       .replaceAll("__MALIANG_ALLOW_INSECURE_LOCAL__", String(allowInsecureLocal)));
   }
   if (relativePath === CODEX_PLUGIN_LOCAL_MCP && source.length === 0) {
-    throw new Error("神笔马良插件的本地图片保存 MCP 为空");
+    throw new Error("灵图AI插件的本地图片保存 MCP 为空");
   }
   return source;
 }
@@ -491,7 +491,7 @@ export async function buildCodexPluginArchive(publicBaseUrl: string, expectedVer
   const validatedPublicBaseUrl = validateMaliangPublicOrigin(publicBaseUrl);
   const pluginVersion = await readCodexPluginVersion();
   if (expectedVersion && expectedVersion !== pluginVersion) {
-    throw new Error(`神笔马良插件版本在打包期间发生变化：期望 ${expectedVersion}，实际 ${pluginVersion}`);
+    throw new Error(`灵图AI插件版本在打包期间发生变化：期望 ${expectedVersion}，实际 ${pluginVersion}`);
   }
   const output = new PassThrough();
   const chunks: Buffer[] = [];
@@ -546,7 +546,7 @@ async function pluginLatestManifest(c: Context, cachedArchive?: { buffer: Buffer
   const { buffer, version } = archive;
   return {
     schemaVersion: 1,
-    product: "神笔马良",
+    product: "灵图AI",
     type: "codex-plugin-marketplace",
     codexOnly: true,
     marketplace: "maliang-internal",
@@ -592,7 +592,7 @@ async function pluginInstallManifest(c: Context) {
     ...latest,
     userInstruction: links.plugin.instruction,
     execution: agentExecutionPolicy(),
-    clientGuard: "这是神笔马良的 Codex 专用插件包，仅可安装到 Codex。其他客户端即使拥有自己的插件机制，也不能安装此包；当前请改用 /mcp。",
+    clientGuard: "这是灵图AI的 Codex 专用插件包，仅可安装到 Codex。其他客户端即使拥有自己的插件机制，也不能安装此包；当前请改用 /mcp。",
     prerequisites: [
       "可执行 codex 命令",
       "Node 20+ 用于启动插件内置 maliang_local stdio MCP，并通过同一份 maliang-helper.mjs 上传本地附件、保存生成原图；缺少 Node 时 Remote MCP 核心能力仍可安装，但本地附件只能使用一次性上传页，生成结果不得改用浏览器交付",
@@ -663,7 +663,7 @@ async function pluginInstallManifest(c: Context) {
       "运行 codex --version、node --version、bun --version、codex plugin list --json 和 codex plugin marketplace list --json，检查客户端能力、旧插件和旧 Marketplace；Node 20+ 用于 maliang_local 保存 MCP，缺失时记录生成结果本地交付不可用但继续安装 Remote MCP 核心能力",
       "下载 downloadUrl 到临时文件，计算 SHA-256，必须与 sha256 完全一致",
       "解压到 durableInstallDirectory 的同级暂存目录，确认其中存在 .agents/plugins/marketplace.json",
-      "把验证后的 codex-marketplace 目录切换到 durableInstallDirectory；只替换神笔马良自己的目录，并保留旧目录直到新安装验证成功；切换失败立即恢复旧目录",
+      "把验证后的 codex-marketplace 目录切换到 durableInstallDirectory；只替换灵图AI自己的目录，并保留旧目录直到新安装验证成功；切换失败立即恢复旧目录",
       "若 maliang-internal 尚未登记，执行 codex plugin marketplace add <durableInstallDirectory>；必须把当前平台的绝对目录作为一个完整参数传入，尤其不要拆开 macOS 的 Application Support",
       "执行 codex plugin add maliang-image-generator@maliang-internal",
       "审查并信任插件内置 Hook；CLI 可使用 /hooks 查看。自动更新默认是 auto，但未信任 Hook 时 Codex 会跳过它",
@@ -698,7 +698,7 @@ async function compatibleInstallManifest(c: Context) {
   const endpoint = maliangMcpResourceUrl(c);
   return {
     schemaVersion: 1,
-    product: "神笔马良",
+    product: "灵图AI",
     type: "client-compatible-installer",
     userInstruction: links.install.instruction,
     execution: agentExecutionPolicy(),
@@ -724,7 +724,7 @@ async function compatibleInstallManifest(c: Context) {
         clients: ["Claude Code", "TRAE Work", "WorkBuddy", "其他 AI 客户端"],
         install: "remote-mcp",
         clientSpecificPluginAvailable: false,
-        futurePluginRule: "仅当本安装清单明确提供当前客户端的专用神笔马良插件包时，才安装该客户端插件",
+        futurePluginRule: "仅当本安装清单明确提供当前客户端的专用灵图AI插件包时，才安装该客户端插件",
         manifest: `${links.publicBaseUrl}/mcp/install.json`,
         forbidden: "不得把 Codex 插件包安装到其他客户端"
       }
@@ -764,7 +764,7 @@ function pageShell(input: {
   const navLink = input.kind === "install" ? "" : '<a href="/install">安装入口</a>';
   const nav = input.kind === "install"
     ? ""
-    : `<nav class="nav"><div class="brand"><img src="/image/logo-small.webp" alt=""><span>神笔马良</span></div><div class="navlinks">${navLink}</div></nav>`;
+    : `<nav class="nav"><div class="brand"><img src="/image/logo-small.webp" alt=""><span>灵图AI</span></div><div class="navlinks">${navLink}</div></nav>`;
   const eyebrow = input.kind === "install" ? "" : `<span class="eyebrow">${escapeHtml(input.eyebrow)}</span>`;
   const titleLogo = input.kind === "install" ? '<img class="title-logo" src="/image/logo-small.webp" alt="">' : "";
   const versionBadge = input.version ? `<span class="version-badge">v${escapeHtml(input.version)}</span>` : "";
@@ -777,7 +777,7 @@ function pageShell(input: {
     ? "安装完成后，按提示重启 Codex 或新建任务"
     : "安装完成后，按提示重启当前 AI 客户端或新建任务";
   return `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(input.title)} · 神笔马良</title>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(input.title)} · 灵图AI</title>
 <link rel="icon" type="image/webp" href="/image/logo-small.webp">
 <link rel="alternate" type="application/json" href="${escapeHtml(input.alternateHref)}">
 <style>
@@ -808,7 +808,7 @@ body,body.is-mcp{--install-card-color:var(--install-primary);color:var(--install
 @media(max-width:700px){.hero::after{background:linear-gradient(90deg,var(--install-surface) 0%,color-mix(in srgb,var(--install-surface) 94%,transparent) 66%,color-mix(in srgb,var(--install-surface) 58%,transparent) 100%)}.manual-mcp{padding:16px}.manual-config-toolbar{align-items:center}.manual-copybutton{min-height:34px}.manual-config pre{padding:14px;font-size:12px}}
 </style></head><body class="is-${input.kind}"><div class="wrap">${nav}
 <header class="hero"><img class="hero-art" src="/image/help/maliang-help-hero-v2.webp" alt="" aria-hidden="true"><div class="hero-content">${eyebrow}<div class="title-row">${titleLogo}<h1>${escapeHtml(input.title)}</h1>${versionBadge}</div><p>${escapeHtml(input.description)}</p><div class="copybox"><div class="copylabel">安装指令</div><div class="copyrow"><div class="copytext" id="install-copy-text">${escapeHtml(input.copyText)}</div><button class="copybutton" type="button" data-copy-target="install-copy-text">复制</button></div></div></div></header>
-<main class="grid">${input.sections}${manualMcpSection}<details class="protocol"><summary><span class="protocol-summary-copy"><strong>查看完整安装说明</strong><small>复制给 AI 后由当前智能体直接执行</small></span></summary><div class="protocol-body"><p>把上方安装指令复制给 AI 后，当前智能体必须继续在正在运行的客户端完成真实安装和验证，不能停在读取、解释或展示配置。安装过程中，你只需要：</p><ol><li>${protocolPermission}</li><li>在浏览器完成神笔马良登录与授权</li><li>${protocolFinish}</li></ol><p class="protocol-help">如果智能体只读取而没有执行，请把安装清单地址 <a href="${escapeHtml(input.alternateHref)}">${escapeHtml(input.alternateHref)}</a> 一并发送，并明确要求它按 execution 规则继续安装。</p></div></details><pre hidden id="ai-install-instructions">${escapeHtml(manifestJson)}</pre></main><footer class="footer">神笔马良内部安装入口 · 账号授权在浏览器中完成</footer></div><script type="application/json" id="maliang-install-manifest">${manifestJson}</script><script>async function copyPageText(text){try{await navigator.clipboard.writeText(text)}catch{const area=document.createElement("textarea");area.value=text;area.style.position="fixed";area.style.opacity="0";document.body.appendChild(area);area.select();document.execCommand("copy");area.remove()}}document.querySelectorAll("[data-copy-target]").forEach((button)=>{button.addEventListener("click",async()=>{const targetId=button.getAttribute("data-copy-target")??"";const text=document.getElementById(targetId)?.textContent??"";await copyPageText(text);const original=button.textContent??"复制";button.textContent="已复制";window.setTimeout(()=>{button.textContent=original},1600)})});</script></body></html>`;
+<main class="grid">${input.sections}${manualMcpSection}<details class="protocol"><summary><span class="protocol-summary-copy"><strong>查看完整安装说明</strong><small>复制给 AI 后由当前智能体直接执行</small></span></summary><div class="protocol-body"><p>把上方安装指令复制给 AI 后，当前智能体必须继续在正在运行的客户端完成真实安装和验证，不能停在读取、解释或展示配置。安装过程中，你只需要：</p><ol><li>${protocolPermission}</li><li>在浏览器完成灵图AI登录与授权</li><li>${protocolFinish}</li></ol><p class="protocol-help">如果智能体只读取而没有执行，请把安装清单地址 <a href="${escapeHtml(input.alternateHref)}">${escapeHtml(input.alternateHref)}</a> 一并发送，并明确要求它按 execution 规则继续安装。</p></div></details><pre hidden id="ai-install-instructions">${escapeHtml(manifestJson)}</pre></main><footer class="footer">灵图AI内部安装入口 · 账号授权在浏览器中完成</footer></div><script type="application/json" id="maliang-install-manifest">${manifestJson}</script><script>async function copyPageText(text){try{await navigator.clipboard.writeText(text)}catch{const area=document.createElement("textarea");area.value=text;area.style.position="fixed";area.style.opacity="0";document.body.appendChild(area);area.select();document.execCommand("copy");area.remove()}}document.querySelectorAll("[data-copy-target]").forEach((button)=>{button.addEventListener("click",async()=>{const targetId=button.getAttribute("data-copy-target")??"";const text=document.getElementById(targetId)?.textContent??"";await copyPageText(text);const original=button.textContent??"复制";button.textContent="已复制";window.setTimeout(()=>{button.textContent=original},1600)})});</script></body></html>`;
 }
 
 export function registerInternalDistributionRoutes(app: Hono) {
@@ -836,14 +836,14 @@ export function registerInternalDistributionRoutes(app: Hono) {
       const manifest = await compatibleInstallManifest(c);
       return c.html(pageShell({
         eyebrow: "AI 客户端安装",
-        title: "安装神笔马良插件",
+        title: "安装灵图AI插件",
         description: "Codex 默认安装插件，其他客户端当前安装 MCP。",
         copyText: manifest.userInstruction,
         manifest,
         manualMcpConfig: manifest.manualRemoteMcp.config,
         alternateHref: "/install/install.json",
         kind: "install",
-        sections: `<section class="card"><h2>Codex</h2><p>默认由当前智能体安装神笔马良 Codex 插件；如果你明确说明“只安装 MCP”，则只配置 MCP。</p></section><section class="card"><h2>其他智能体</h2><p>对于 Claude Code、TRAE Work、WorkBuddy 及标准 MCP 客户端，当前智能体会直接安装 MCP Server，写入并加载真实配置，而不是仅检查或读取现有配置。</p></section>`
+        sections: `<section class="card"><h2>Codex</h2><p>默认由当前智能体安装灵图AI Codex 插件；如果你明确说明“只安装 MCP”，则只配置 MCP。</p></section><section class="card"><h2>其他智能体</h2><p>对于 Claude Code、TRAE Work、WorkBuddy 及标准 MCP 客户端，当前智能体会直接安装 MCP Server，写入并加载真实配置，而不是仅检查或读取现有配置。</p></section>`
       }));
     } catch {
       return c.html(pageShell({
@@ -871,7 +871,7 @@ export function registerInternalDistributionRoutes(app: Hono) {
     const manifest = mcpInstallManifest(c);
     return c.html(pageShell({
       eyebrow: "MCP 安装",
-      title: "安装神笔马良 MCP",
+      title: "安装灵图AI MCP",
       description: "仅安装 Remote MCP，不会下载或安装 Codex 插件。",
       copyText: manifest.userInstruction,
       manifest,
@@ -928,14 +928,14 @@ export function registerInternalDistributionRoutes(app: Hono) {
       const manifest = await pluginInstallManifest(c);
       return c.html(pageShell({
         eyebrow: "CODEX 插件安装",
-        title: "安装神笔马良 Codex 插件",
+        title: "安装灵图AI Codex 插件",
         description: "这是 Codex 专用插件包；其他客户端当前请通过统一入口安装 MCP。",
         copyText: manifest.userInstruction,
         manifest,
         alternateHref: "/plugin/install.json",
         kind: "plugin",
         version: manifest.version,
-        sections: `<section class="card"><h2>安装内容</h2><ul><li>神笔马良 Codex 插件与使用技能</li><li>Remote MCP 配置</li><li>文生图、改图和本地图片上传流程</li></ul></section><section class="card"><h2>你需要完成</h2><ol><li>允许 AI 下载并校验内部安装包</li><li>在浏览器登录并授权神笔马良</li><li>按提示重启 Codex 或新建任务</li></ol></section>`
+        sections: `<section class="card"><h2>安装内容</h2><ul><li>灵图AI Codex 插件与使用技能</li><li>Remote MCP 配置</li><li>文生图、改图和本地图片上传流程</li></ul></section><section class="card"><h2>你需要完成</h2><ol><li>允许 AI 下载并校验内部安装包</li><li>在浏览器登录并授权灵图AI</li><li>按提示重启 Codex 或新建任务</li></ol></section>`
       }));
     } catch {
       return c.html(pageShell({

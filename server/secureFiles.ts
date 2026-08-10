@@ -5,6 +5,7 @@ import path from "node:path";
 import { appDb, configDb, getAll, getOne, run } from "./db";
 import { absoluteDataPath } from "./paths";
 import { now } from "./utils";
+import { deleteObjectStorageFile, objectStorageUsesCos, readObjectStorageFile, writeObjectStorageFile } from "./objectStorage";
 
 const MAGIC = Buffer.from("GIMG1");
 const IV_LENGTH = 12;
@@ -143,14 +144,40 @@ export function decryptBuffer(buffer: Buffer) {
 
 export async function readStoredFile(relativePath: string) {
   const cleanPath = relativePath.replace(/^\/+/, "").replaceAll("\\", "/");
+  if (objectStorageUsesCos(cleanPath)) {
+    try {
+      return await readObjectStorageFile(cleanPath);
+    } catch (error) {
+      if (!existsSync(absoluteDataPath(cleanPath))) throw error;
+      const buffer = decryptBuffer(await readFile(absoluteDataPath(cleanPath)));
+      try {
+        await writeObjectStorageFile(cleanPath, buffer, storedImageMimeType(buffer));
+      } catch (uploadError) {
+        console.warn("本地图片自动补传 COS 失败", cleanPath, uploadError);
+      }
+      return buffer;
+    }
+  }
   const buffer = await readFile(absoluteDataPath(cleanPath));
   return decryptBuffer(buffer);
 }
 
 export async function writeEncryptedFile(relativePath: string, buffer: Buffer) {
-  const absolutePath = absoluteDataPath(relativePath.replace(/^\/+/, "").replaceAll("\\", "/"));
+  const cleanPath = relativePath.replace(/^\/+/, "").replaceAll("\\", "/");
+  if (objectStorageUsesCos(cleanPath)) {
+    await writeObjectStorageFile(cleanPath, buffer, storedImageMimeType(buffer));
+    return;
+  }
+  const absolutePath = absoluteDataPath(cleanPath);
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, encryptBuffer(buffer));
+}
+
+function storedImageMimeType(buffer: Buffer) {
+  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return "image/jpeg";
+  if (buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  return "application/octet-stream";
 }
 
 async function fileExists(relativePath: string) {
@@ -199,6 +226,9 @@ export async function deleteStoredFilesIfUnreferenced(paths: string[]) {
   const uniquePaths = Array.from(new Set(paths.map((item) => String(item ?? "").trim().replaceAll("\\", "/")).filter(Boolean)));
   for (const filePath of uniquePaths) {
     if (isStoredPathReferenced(filePath)) continue;
+    if (objectStorageUsesCos(filePath)) {
+      await deleteObjectStorageFile(filePath).catch((error) => console.warn(`COS 文件删除失败: ${filePath}`, error));
+    }
     await unlink(absoluteDataPath(filePath)).catch((error) => {
       if (existsSync(absoluteDataPath(filePath))) console.warn(`文件删除失败: ${filePath}`, error);
     });

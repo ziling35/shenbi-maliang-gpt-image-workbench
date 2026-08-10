@@ -55,7 +55,7 @@ describe("external MCP internal image requests", () => {
       type: "resource_link",
       uri: "https://maliang.example/mcp/image-result/token_test",
       name: "img_test",
-      title: "神笔马良原图 img_test",
+      title: "灵图AI原图 img_test",
       description: "原图下载地址，有效期至 2026-08-28 16:00:00（北京时间）",
       mimeType: "image/png"
     });

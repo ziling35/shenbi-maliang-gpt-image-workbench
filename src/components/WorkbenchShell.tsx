@@ -436,15 +436,25 @@ export function WorkbenchShell({ user }: { user: User }) {
   const [deleteAccountConfirmOpen, setDeleteAccountConfirmOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [billingOpen, setBillingOpen] = useState(false);
+  const handledPaymentReturnRef = useRef("");
   const billingAccount = useQuery({ queryKey: ["billing-account"], queryFn: api.billingAccount, enabled: userCardOpen || billingOpen });
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     if (params.get("payment") !== "return") return;
+    const paymentReturnKey = `${location.pathname}?${location.search}`;
+    if (handledPaymentReturnRef.current === paymentReturnKey) return;
+    handledPaymentReturnRef.current = paymentReturnKey;
+    const paymentStatus = params.get("paymentStatus");
     setBillingOpen(true);
-    queryClient.invalidateQueries({ queryKey: ["billing-account"] });
+    void queryClient.invalidateQueries({ queryKey: ["billing-account"] });
+    void queryClient.invalidateQueries({ queryKey: ["me"] });
+    if (paymentStatus === "success") showToast("充值成功，余额已到账");
+    if (paymentStatus === "failed") showToast("支付结果校验失败，订单暂未入账，请联系管理员核对回调配置", "error");
     params.delete("payment");
+    params.delete("paymentStatus");
+    params.delete("orderId");
     navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : "" }, { replace: true });
-  }, [location.pathname, location.search, navigate, queryClient]);
+  }, [location.pathname, location.search, navigate, queryClient, showToast]);
   const [archivedChatsOpen, setArchivedChatsOpen] = useState(false);
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null);
   const [topSessionMenuOpen, setTopSessionMenuOpen] = useState(false);

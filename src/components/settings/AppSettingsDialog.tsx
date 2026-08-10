@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BellRing, Cable, Check, Copy, Database, Github, KeyRound, Leaf, Link2, Monitor, Moon, Palette, Pencil, ScrollText, Search, Settings, Smile, Sun, Sunset, Trash2, UserRound, Volume1, Volume2, VolumeOff, X } from "lucide-react";
+import { Archive, BellRing, Cable, Check, ContactRound, Copy, Database, Github, KeyRound, Leaf, Link2, Monitor, Moon, Palette, Pencil, ScrollText, Search, Settings, Smile, Sun, Sunset, Trash2, UserRound, Volume1, Volume2, VolumeOff, X } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api, type ExternalMcpConnection } from "../../api";
 import {
@@ -33,12 +33,13 @@ import {
 import type { EditSuggestionTone, ImagePreviewOpenMode, ImagePreviewWheelMode, ImageTaskSound, User, UserPreferences } from "../../types";
 import { ConfirmDialog, CustomSelect, useToast } from "../../ui";
 import { MarkdownView } from "../MarkdownView";
+import { BillingAccountPanel } from "../BillingDialog";
 import { PromptColorSchemeSettingsDialog } from "../PromptColorSchemeSettingsDialog";
 import { PromptOptimizeStyleSettingsDialog } from "../PromptOptimizeStyleSettingsDialog";
 import { ImageTaskSoundSelect } from "./ImageTaskSoundSelect";
 import { SharedLinksDialog } from "./SharedLinksDialog";
 
-type SettingsSectionId = "general" | "sound" | "personalization" | "account" | "plugins" | "data" | "about";
+type SettingsSectionId = "general" | "sound" | "personalization" | "profile" | "account" | "plugins" | "data" | "about";
 type SettingsSectionDirection = "forward" | "backward";
 type PluginConnectionAction = { kind: "revoke" | "restore" | "remove"; connection: ExternalMcpConnection } | null;
 
@@ -49,6 +50,7 @@ const settingsSections: Array<{ id: SettingsSectionId; labelKey: string; icon: L
   { id: "general", labelKey: "settings.nav.general", icon: Settings },
   { id: "sound", labelKey: "settings.nav.soundMenu", icon: BellRing },
   { id: "personalization", labelKey: "settings.nav.personalization", icon: Smile },
+  { id: "profile", labelKey: "settings.nav.profile", icon: ContactRound },
   { id: "account", labelKey: "settings.nav.account", icon: UserRound },
   { id: "plugins", labelKey: "settings.nav.plugins", icon: Cable },
   { id: "data", labelKey: "settings.nav.data", icon: Database },
@@ -59,6 +61,7 @@ const settingsSectionTitleKeys: Record<SettingsSectionId, string> = {
   general: "settings.nav.general",
   sound: "settings.nav.sound",
   personalization: "settings.nav.personalization",
+  profile: "settings.nav.profile",
   account: "settings.nav.account",
   plugins: "settings.nav.plugins",
   data: "settings.nav.data",
@@ -934,7 +937,7 @@ export function AppSettingsDialog({
                 </button>
               </div>
             </div>
-          ) : activeSection === "account" ? (
+          ) : activeSection === "profile" ? (
             <div className="settings-list">
               <div className="settings-row settings-account-row">
                 <div className="settings-account-main">
@@ -959,16 +962,6 @@ export function AppSettingsDialog({
               </div>
               <div className="settings-row">
                 <div>
-                  <strong>{t("settings.account.password")}</strong>
-                  <span>{t("settings.account.passwordDesc")}</span>
-                </div>
-                <button className="secondary-btn" type="button" onClick={onChangePassword}>
-                  <KeyRound size={15} />
-                  {t("settings.account.changePassword")}
-                </button>
-              </div>
-              <div className="settings-row">
-                <div>
                   <strong>{t("settings.account.email")}</strong>
                   <span>{user.email || t("settings.account.emailEmpty")}</span>
                 </div>
@@ -979,6 +972,28 @@ export function AppSettingsDialog({
                   <span>{user.teamName || user.teamId || t("settings.account.defaultTeam")}</span>
                 </div>
               </div>
+            </div>
+          ) : activeSection === "account" ? (
+            <div className="settings-list">
+              <div className="settings-row">
+                <div>
+                  <strong>{t("settings.account.password")}</strong>
+                  <span>{t("settings.account.passwordDesc")}</span>
+                </div>
+                <button className="secondary-btn" type="button" onClick={onChangePassword}>
+                  <KeyRound size={15} />
+                  {t("settings.account.changePassword")}
+                </button>
+              </div>
+              <section className="settings-account-finance">
+                <div className="settings-account-finance-head">
+                  <div>
+                    <strong>余额、充值与账单</strong>
+                    <span>查看账户余额、在线充值、充值订单和每笔余额变动</span>
+                  </div>
+                </div>
+                <BillingAccountPanel active={open && activeSection === "account"} embedded />
+              </section>
               <div className="settings-row danger">
                 <div>
                   <strong>{t("settings.account.delete")}</strong>

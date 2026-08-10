@@ -1,8 +1,8 @@
 <div align="center">
 
 <h1>
-  <img src="public/image/logo-small.webp" alt="神笔马良 Logo" width="48" align="texttop" />
-  神笔马良 GPT Image Workbench
+  <img src="public/image/logo-small.webp" alt="灵图AI Logo" width="48" align="texttop" />
+  灵图AI GPT Image Workbench
 </h1>
 
 简体中文 | [English](README.en.md) | [日本語](docs/readme/README.ja.md) | [한국어](docs/readme/README.ko.md) | [Русский](docs/readme/README.ru.md) | [فارسی](docs/readme/README.fa-IR.md)
@@ -11,7 +11,7 @@
 
 </div>
 
-神笔马良 GPT Image Workbench 是一个面向团队内部私有部署的 AI 图片生成与图片编辑工作台，支持 ChatGPT 订阅账号、OpenAI 兼容接口和 CPA 代理等渠道，并可在官网额度、Codex 额度等多链路间调度。
+灵图AI GPT Image Workbench 是一个面向团队内部私有部署的 AI 图片生成与图片编辑工作台，支持 ChatGPT 订阅账号、OpenAI 兼容接口和 CPA 代理等渠道，并可在官网额度、Codex 额度等多链路间调度。
 
 ## ✨ 亮点功能
 

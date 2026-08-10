@@ -2,28 +2,40 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CreditCard, History, ReceiptText, WalletCards, X } from "lucide-react";
 import { api } from "../api";
+import { cx } from "../lib/cx";
 
 const RECORDS_PER_PAGE = 6;
 
 type BillingView = "recharge" | "records";
 type RecordView = "orders" | "ledger";
 
-export function BillingDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function BillingAccountPanel({ active, embedded = false }: { active: boolean; embedded?: boolean }) {
   const queryClient = useQueryClient();
   const [amount, setAmount] = useState("10");
   const [paymentType, setPaymentType] = useState("alipay");
   const [view, setView] = useState<BillingView>("recharge");
   const [recordView, setRecordView] = useState<RecordView>("orders");
   const [recordPage, setRecordPage] = useState(0);
+  const [paymentWaitingOrderId, setPaymentWaitingOrderId] = useState<string | null>(null);
+  const paymentWaiting = Boolean(paymentWaitingOrderId);
   const account = useQuery({
     queryKey: ["billing-account"],
     queryFn: api.billingAccount,
-    enabled: open,
-    refetchInterval: (query) => query.state.data?.orders.some((order) => order.status === "pending") ? 3000 : false
+    enabled: active,
+    refetchInterval: (query) => paymentWaiting || query.state.data?.orders.some((order) => order.status === "pending") ? 2000 : false
   });
   const recharge = useMutation({
-    mutationFn: () => api.createRecharge({ amount: Number(amount), type: paymentType }),
-    onSuccess: (data) => { window.location.href = data.paymentUrl; },
+    mutationFn: (variables: { paymentWindow: Window | null }) => api.createRecharge({ amount: Number(amount), type: paymentType }).then((data) => ({ ...data, paymentWindow: variables.paymentWindow })),
+    onSuccess: (data) => {
+      setPaymentWaitingOrderId(data.orderId);
+      if (data.paymentWindow && !data.paymentWindow.closed) {
+        data.paymentWindow.location.href = data.paymentUrl;
+        data.paymentWindow.focus();
+      } else {
+        window.location.href = data.paymentUrl;
+      }
+    },
+    onError: (_error, variables) => { variables?.paymentWindow?.close(); },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["billing-account"] })
   });
   const records = recordView === "orders" ? account.data?.orders ?? [] : account.data?.ledger ?? [];
@@ -35,26 +47,38 @@ export function BillingDialog({ open, onClose }: { open: boolean; onClose: () =>
 
   useEffect(() => {
     setRecordPage(0);
-  }, [recordView, open]);
+  }, [active, recordView]);
 
   useEffect(() => {
     if (recordPage < pageCount) return;
     setRecordPage(pageCount - 1);
   }, [pageCount, recordPage]);
 
-  if (!open) return null;
+  useEffect(() => {
+    if (!paymentWaitingOrderId) return;
+    const order = account.data?.orders.find((item) => item.id === paymentWaitingOrderId);
+    if (order?.status === "paid") {
+      setPaymentWaitingOrderId(null);
+      void queryClient.invalidateQueries({ queryKey: ["me"] });
+    }
+  }, [account.data?.orders, paymentWaitingOrderId, queryClient]);
+
+  useEffect(() => {
+    if (!active) return;
+    const refresh = () => { void account.refetch(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [active, account.refetch]);
+
+  if (!active) return null;
   const payment = account.data?.payment;
 
   return (
-    <div className="modal-backdrop billing-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="billing-dialog" role="dialog" aria-modal="true" aria-label="余额充值">
-        <header>
-          <div>
-            <span className="billing-dialog-icon"><WalletCards size={22} /></span>
-            <div><h2>余额与充值</h2><p>余额用于图片生成、编辑和文字模型调用</p></div>
-          </div>
-          <button className="icon-btn" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
-        </header>
+    <div className={cx("billing-account-panel", embedded && "is-embedded")}>
         <div className="billing-balance"><span>当前余额</span><strong>¥{((account.data?.balanceCents ?? 0) / 100).toFixed(2)}</strong></div>
         <div className="billing-view-tabs" role="tablist" aria-label="余额功能">
           <button type="button" role="tab" aria-selected={view === "recharge"} className={view === "recharge" ? "active" : ""} onClick={() => setView("recharge")}><CreditCard size={16} />充值</button>
@@ -65,11 +89,16 @@ export function BillingDialog({ open, onClose }: { open: boolean; onClose: () =>
           {view === "recharge" ? (
             <div className="billing-recharge-view">
               {payment?.enabled ? (
-                <form onSubmit={(event) => { event.preventDefault(); recharge.mutate(); }}>
+                <form onSubmit={(event) => {
+                  event.preventDefault();
+                  const paymentWindow = window.open("about:blank", "_blank");
+                  recharge.mutate({ paymentWindow });
+                }}>
                   <label>充值金额（元）<input type="number" min={(payment.minimumRechargeCents / 100).toFixed(2)} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></label>
                   <div className="billing-payment-types">{payment.paymentTypes.map((type) => <button type="button" key={type} className={paymentType === type ? "active" : ""} onClick={() => setPaymentType(type)}><CreditCard size={17} />{type === "wxpay" ? "微信支付" : type === "qqpay" ? "QQ支付" : "支付宝"}</button>)}</div>
                   {recharge.error ? <div className="form-error">{recharge.error.message}</div> : null}
                   <button className="primary-btn" disabled={recharge.isPending}>{recharge.isPending ? "正在创建订单..." : "立即充值"}</button>
+                  {paymentWaiting ? <div className="billing-payment-waiting" role="status">支付页面已打开，完成支付后余额会自动刷新。</div> : null}
                 </form>
               ) : <div className="billing-disabled">管理员尚未开启在线支付</div>}
               <div className="billing-orders billing-price-list">
@@ -108,6 +137,24 @@ export function BillingDialog({ open, onClose }: { open: boolean; onClose: () =>
             </div>
           )}
         </div>
+    </div>
+  );
+}
+
+export function BillingDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  if (!open) return null;
+
+  return (
+    <div className="modal-backdrop billing-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="billing-dialog" role="dialog" aria-modal="true" aria-label="余额充值">
+        <header>
+          <div>
+            <span className="billing-dialog-icon"><WalletCards size={22} /></span>
+            <div><h2>余额与充值</h2><p>余额用于图片生成、编辑和文字模型调用</p></div>
+          </div>
+          <button className="icon-btn" type="button" onClick={onClose} aria-label="关闭"><X size={18} /></button>
+        </header>
+        <BillingAccountPanel active={open} />
       </section>
     </div>
   );

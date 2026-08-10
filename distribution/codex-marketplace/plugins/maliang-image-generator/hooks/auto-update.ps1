@@ -576,7 +576,7 @@ function Invoke-MaliangAutoUpdate {
       $state.lastError = $message.Substring(0, [Math]::Min(1000, $message.Length))
       Write-State $pluginData $state
       Write-UpdateLog $pluginData "check-failed $message"
-      Write-HookContext "神笔马良自动更新检查失败，当前工具继续使用 $($current.version)：$message"
+      Write-HookContext "灵图AI自动更新检查失败，当前工具继续使用 $($current.version)：$message"
       return
     }
 
@@ -585,7 +585,7 @@ function Invoke-MaliangAutoUpdate {
       return
     }
     if ($latest.update.compatibility -ceq "incompatible") {
-      $reason = "神笔马良 $($latest.version) 是不兼容更新，未自动覆盖当前 $($current.version)。"
+      $reason = "灵图AI $($latest.version) 是不兼容更新，未自动覆盖当前 $($current.version)。"
       Write-UpdateLog $pluginData "incompatible $($current.version) -> $($latest.version)"
       if ($latest.update.critical -eq $true -and $latest.update.blockOldVersion -eq $true) {
         $state.blockedReason = "$reason 此版本已被标记为必须迁移，请先按 /plugin/install.json 完成人工更新。"
@@ -599,14 +599,14 @@ function Invoke-MaliangAutoUpdate {
     }
     if ($mode -eq "notify") {
       Write-UpdateLog $pluginData "available $($current.version) -> $($latest.version)"
-      Write-HookContext "神笔马良有可用更新 $($current.version) -> $($latest.version)；当前模式为 notify，未自动安装。"
+      Write-HookContext "灵图AI有可用更新 $($current.version) -> $($latest.version)；当前模式为 notify，未自动安装。"
       return
     }
 
     $installed = Get-InstalledPlugin $pluginData
     if ((Compare-SemVer ([string]$latest.version) ([string]$installed.version)) -le 0) {
       Write-UpdateLog $pluginData "already-installed $($installed.version); loaded $($current.version)"
-      Write-HookContext "神笔马良 $($installed.version) 已安装；当前任务仍加载 $($current.version)，请新建任务或重启 Codex 后生效。"
+      Write-HookContext "灵图AI $($installed.version) 已安装；当前任务仍加载 $($current.version)，请新建任务或重启 Codex 后生效。"
       return
     }
     if ($installed.version -cne [string]$current.version) {
@@ -632,7 +632,7 @@ function Invoke-MaliangAutoUpdate {
     $state.pendingSessionId = if ($hookInput.session_id) { [string]$hookInput.session_id } else { $null }
     Write-State $pluginData $state
     Write-UpdateLog $pluginData "installed $($current.version) -> $($latest.version); backup $backupPath"
-    Write-HookContext "神笔马良已自动更新 $($current.version) -> $($latest.version)。当前工具调用继续使用已加载版本；新版本将在下个任务或重启 Codex 后生效。OAuth 凭据未被清除。"
+    Write-HookContext "灵图AI已自动更新 $($current.version) -> $($latest.version)。当前工具调用继续使用已加载版本；新版本将在下个任务或重启 Codex 后生效。OAuth 凭据未被清除。"
   } finally {
     if ($lockOwned) { Remove-Item -LiteralPath $lockPath -Force -Recurse -ErrorAction SilentlyContinue }
   }
@@ -655,6 +655,6 @@ if ($MyInvocation.InvocationName -ne '.') {
         Write-State $pluginDataForError $state
       } catch {}
     }
-    Write-HookContext "神笔马良自动更新失败，已保留当前版本并继续本次工具调用：$message"
+    Write-HookContext "灵图AI自动更新失败，已保留当前版本并继续本次工具调用：$message"
   }
 }

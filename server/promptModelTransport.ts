@@ -1,5 +1,6 @@
 import {
   fetchPromptOptimizerWithRetry,
+  normalizePromptOptimizerRetryCount,
   promptOptimizerHeaders,
   type PromptOptimizerProviderRow
 } from "./promptOptimizerRoutes";
@@ -77,11 +78,15 @@ function streamFrameContent(frame: string) {
     const data = safeJson<unknown>(payload, null);
     const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
     const choices = Array.isArray(record.choices) ? record.choices : [];
+    let payloadContent = "";
     for (const choiceValue of choices) {
       const choice = choiceValue && typeof choiceValue === "object" ? choiceValue as Record<string, unknown> : {};
       const delta = choice.delta && typeof choice.delta === "object" ? choice.delta as Record<string, unknown> : {};
-      content += chatContentText(delta.content ?? choice.text);
+      payloadContent += chatContentText(delta.content ?? choice.text);
     }
+    if (!payloadContent) payloadContent = chatContentText(record.delta);
+    if (!payloadContent) payloadContent = promptModelResponseText(record);
+    content += payloadContent;
   }
   return content;
 }
@@ -176,33 +181,38 @@ async function requestProtocol({
   let attemptCount = 0;
   let statusCode: number | null = null;
   try {
-    const response = await fetchPromptOptimizerWithRetry(provider, endpoint, {
-      method: "POST",
-      signal,
-      headers: {
-        ...promptOptimizerHeaders(provider, streamEnabled ? "text/event-stream" : "application/json"),
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
-    }, {
-      onAttempt: () => { attemptCount += 1; }
-    });
-    statusCode = response.status;
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(responseErrorMessage(response, text));
+    const emptyResponseRetryCount = normalizePromptOptimizerRetryCount(provider.retry_count);
+    for (let emptyResponseAttempt = 0; emptyResponseAttempt <= emptyResponseRetryCount; emptyResponseAttempt += 1) {
+      const response = await fetchPromptOptimizerWithRetry(provider, endpoint, {
+        method: "POST",
+        signal,
+        headers: {
+          ...promptOptimizerHeaders(provider, streamEnabled ? "text/event-stream" : "application/json"),
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      }, {
+        onAttempt: () => { attemptCount += 1; }
+      });
+      statusCode = response.status;
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(responseErrorMessage(response, text));
+      }
+      const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+      let content = "";
+      if (streamEnabled && contentType.includes("text/event-stream")) {
+        content = await readStreamingChatCompletion(response, onContent);
+      } else {
+        const text = await response.text();
+        content = promptModelResponseText(safeJson<unknown>(text, null), text);
+        if (content) onContent?.(content, content);
+      }
+      if (content.trim()) return { content: content.trim(), endpoint, streamEnabled, attemptCount, statusCode };
+      if (signal?.aborted || emptyResponseAttempt >= emptyResponseRetryCount) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1500, 350 * (emptyResponseAttempt + 1))));
     }
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    let content = "";
-    if (streamEnabled && contentType.includes("text/event-stream")) {
-      content = await readStreamingChatCompletion(response, onContent);
-    } else {
-      const text = await response.text();
-      content = promptModelResponseText(safeJson<unknown>(text, null), text);
-      if (content) onContent?.(content, content);
-    }
-    if (!content.trim()) throw new Error("文字模型没有返回内容");
-    return { content: content.trim(), endpoint, streamEnabled, attemptCount, statusCode };
+    throw new Error(`文字模型连续 ${attemptCount} 次没有返回内容`);
   } catch (error) {
     if (error instanceof PromptModelTransportError) throw error;
     throw new PromptModelTransportError(error instanceof Error ? error.message : String(error), {

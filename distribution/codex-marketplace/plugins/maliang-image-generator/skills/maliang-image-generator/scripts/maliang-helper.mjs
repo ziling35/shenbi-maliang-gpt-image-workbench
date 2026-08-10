@@ -73,11 +73,11 @@ function trustedMaliangOrigin(runtime = {}) {
 function safeMaliangEndpoint(value, label, endpoint, runtime) {
   const url = safeHttpUrl(value, label);
   const trusted = trustedMaliangOrigin(runtime);
-  if (url.origin !== trusted.origin || url.search || url.hash) throw new Error(`${label}不属于已配置的神笔马良服务`);
+  if (url.origin !== trusted.origin || url.search || url.hash) throw new Error(`${label}不属于已配置的灵图AI服务`);
   const pattern = endpoint === "upload"
     ? /^\/mcp\/upload\/[A-Za-z0-9_-]{20,512}$/
     : /^\/mcp\/image-result\/v\d+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
-  if (!pattern.test(url.pathname)) throw new Error(`${label}路径不符合神笔马良安全接口`);
+  if (!pattern.test(url.pathname)) throw new Error(`${label}路径不符合灵图AI安全接口`);
   return url;
 }
 

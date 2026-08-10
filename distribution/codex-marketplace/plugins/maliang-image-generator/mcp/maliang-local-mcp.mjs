@@ -18,7 +18,7 @@ const SAVE_TOOL_NAME = "save_image_result";
 const UPLOAD_TOOL = {
   name: UPLOAD_TOOL_NAME,
   title: "上传本地图片到马良",
-  description: "读取 Codex 当前消息中已提供绝对路径的 PNG、JPG 或 WebP 附件，通过一次性上传地址安全提交到神笔马良；成功后返回可用于改图的 uploadId，不打开浏览器。",
+  description: "读取 Codex 当前消息中已提供绝对路径的 PNG、JPG 或 WebP 附件，通过一次性上传地址安全提交到灵图AI；成功后返回可用于改图的 uploadId，不打开浏览器。",
   inputSchema: {
     type: "object",
     properties: {
@@ -160,7 +160,7 @@ export async function handleMaliangLocalMcpRequest(request, runtime = {}) {
       capabilities: { tools: { listChanged: false } },
       serverInfo: {
         name: SERVER_NAME,
-        title: "神笔马良本地图片工具",
+        title: "灵图AI本地图片工具",
         version: await pluginVersion
       },
       instructions: "本地改图附件使用 upload_local_image 安全上传，再由 maliang_get_image_upload 确认状态；maliang_get_image_job 返回 succeeded 后使用 save_image_result 保存原图。两个工具都不会打开浏览器。"

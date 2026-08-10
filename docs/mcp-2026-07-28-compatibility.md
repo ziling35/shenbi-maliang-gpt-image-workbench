@@ -6,7 +6,7 @@
 
 ## 当前落地
 
-神笔马良本轮继续使用生态稳定的 TypeScript SDK v1，并升级到 `@modelcontextprotocol/sdk` 1.30.0。SDK v2 仍为 beta，且要求 Node 20+；Codex、TRAE Work、Claude Code、WorkBuddy 与其他现有 MCP 客户端尚不能假定已经统一支持 2026-07-28 的无状态握手，因此生产 endpoint 不伪造 v2 能力。
+灵图AI本轮继续使用生态稳定的 TypeScript SDK v1，并升级到 `@modelcontextprotocol/sdk` 1.30.0。SDK v2 仍为 beta，且要求 Node 20+；Codex、TRAE Work、Claude Code、WorkBuddy 与其他现有 MCP 客户端尚不能假定已经统一支持 2026-07-28 的无状态握手，因此生产 endpoint 不伪造 v2 能力。
 
 本轮加入不会破坏旧客户端的 OAuth 兼容增强：
 

@@ -30,7 +30,7 @@ import { CpaPanel, ImageAccountPoolPanel, ImageModePanel, PromptOptimizerPanel, 
 import { AccountSearchPanel, TeamAccountPanel } from "./panels/members";
 import { ChangelogPanel, StatisticsPanel } from "./panels/overview";
 import { ImageTaskSoundManagementPanel } from "./panels/sounds";
-import { AuditPanel, BackupPanel, BrandingSettingsPanel, DebugSettingsPanel, ModelRequestLogsPanel, ProxyPanel, RequestLogsPanel, SmsSettingsPanel, SmtpSettingsPanel } from "./panels/system";
+import { AuditPanel, BackupPanel, BrandingSettingsPanel, DebugSettingsPanel, ModelRequestLogsPanel, ObjectStorageSettingsPanel, ProxyPanel, RequestLogsPanel, SmsSettingsPanel, SmtpSettingsPanel } from "./panels/system";
 import { BillingSettingsPanel } from "./panels/billing";
 
 function configNavLabelKey(value: ConfigTabValue) {
@@ -192,6 +192,9 @@ export function ConfigDashboard() {
         </Tabs.Content>
         <Tabs.Content value="branding">
           <BrandingSettingsPanel />
+        </Tabs.Content>
+        <Tabs.Content value="storage">
+          <ObjectStorageSettingsPanel />
         </Tabs.Content>
         <Tabs.Content value="imageMode">
           <ImageModePanel />

@@ -85,7 +85,7 @@ async function internalImageRequest(
   });
   const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
   if (!response.ok) {
-    const message = String(payload.error ?? payload.error_description ?? `神笔马良接口请求失败（HTTP ${response.status}）`);
+    const message = String(payload.error ?? payload.error_description ?? `灵图AI接口请求失败（HTTP ${response.status}）`);
     throw new Error(message);
   }
   return payload;
@@ -162,7 +162,7 @@ export async function buildMaliangImageJobResult(
     type: "resource_link",
     uri: item.downloadUrl,
     name: item.imageId,
-    title: `神笔马良原图 ${item.imageId}`,
+    title: `灵图AI原图 ${item.imageId}`,
     description: `原图下载地址，有效期至 ${formatChinaDateTime(item.expiresAt)}（北京时间）`,
     mimeType: imagesById.get(item.imageId)?.mime_type || "image/png"
   }));
@@ -192,20 +192,20 @@ export async function buildMaliangImageJobResult(
 async function createMaliangMcpServer(api: Hono) {
   const server = new McpServer({
     name: "maliang-image-generator",
-    title: "神笔马良",
+    title: "灵图AI",
     version: await readCodexPluginVersion()
   }, {
-    instructions: "神笔马良提供文生图、改图和异步任务查询。maliang_report_device 只在新 OAuth 安装完成后的同一安装流程中调用一次，或在其他工具明确返回“设备尚未上报”时调用；reported=true 后同一 OAuth 客户端不要在每次任务、生图或改图前重复上报。服务端已保存设备时，直接调用 maliang_account_status 或图片工具。生成或改图后，使用 maliang_get_image_job 轮询到 succeeded 或 failed；成功时通过 resource_link 和 structuredContent.imageResults.downloadUrl 交付原图，不返回 base64 图片数据。Codex 插件必须调用 bundled maliang_local.save_image_result 保存到 generated_images，再用绝对本地路径直接显示；保存失败时报告交付未完成，绝不为生成结果打开浏览器。不要只回复 jobId、imageId 或任务状态。编辑 Codex 本地附件时，先用 maliang_create_image_upload 获取一次性地址，再调用 bundled maliang_local.upload_local_image；只有宿主未提供可读附件路径或本地 MCP 未启动时才使用浏览器上传页。"
+    instructions: "灵图AI提供文生图、改图和异步任务查询。maliang_report_device 只在新 OAuth 安装完成后的同一安装流程中调用一次，或在其他工具明确返回“设备尚未上报”时调用；reported=true 后同一 OAuth 客户端不要在每次任务、生图或改图前重复上报。服务端已保存设备时，直接调用 maliang_account_status 或图片工具。生成或改图后，使用 maliang_get_image_job 轮询到 succeeded 或 failed；成功时通过 resource_link 和 structuredContent.imageResults.downloadUrl 交付原图，不返回 base64 图片数据。Codex 插件必须调用 bundled maliang_local.save_image_result 保存到 generated_images，再用绝对本地路径直接显示；保存失败时报告交付未完成，绝不为生成结果打开浏览器。不要只回复 jobId、imageId 或任务状态。编辑 Codex 本地附件时，先用 maliang_create_image_upload 获取一次性地址，再调用 bundled maliang_local.upload_local_image；只有宿主未提供可读附件路径或本地 MCP 未启动时才使用浏览器上传页。"
   });
 
   server.registerTool("maliang_account_status", {
     title: "查看马良账号状态",
-    description: "确认当前 MCP 授权对应的神笔马良账号。可直接调用；只有服务端返回设备尚未上报时，才读取真实主机名和操作系统并调用一次 maliang_report_device。",
+    description: "确认当前 MCP 授权对应的灵图AI账号。可直接调用；只有服务端返回设备尚未上报时，才读取真实主机名和操作系统并调用一次 maliang_report_device。",
     inputSchema: {},
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false }
   }, async (_input, extra) => {
     const context = toolContext(extra as McpToolExtra, "profile:read");
-    if (!context) return toolError("当前授权缺少 profile:read 权限，请重新连接神笔马良 MCP。");
+    if (!context) return toolError("当前授权缺少 profile:read 权限，请重新连接灵图AI MCP。");
     const deviceGate = requireReportedDevice(context);
     if (deviceGate) return deviceGate;
     return toolJson({
@@ -229,7 +229,7 @@ async function createMaliangMcpServer(api: Hono) {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
   }, async ({ deviceName, deviceType }, extra) => {
     const context = toolContext(extra as McpToolExtra, "profile:read");
-    if (!context) return toolError("当前授权缺少 profile:read 权限，请重新连接神笔马良 MCP。");
+    if (!context) return toolError("当前授权缺少 profile:read 权限，请重新连接灵图AI MCP。");
     const reported = updateExternalMcpClientDevice(appDb, {
       clientId: context.clientId,
       deviceName,
@@ -240,7 +240,7 @@ async function createMaliangMcpServer(api: Hono) {
   });
 
   server.registerTool("maliang_generate_image", {
-    title: "神笔马良文生图",
+    title: "灵图AI文生图",
     description: "提交一个异步文生图任务，返回 jobId。随后调用 maliang_get_image_job 获取结果。",
     inputSchema: {
       prompt: z.string().trim().min(1).max(8000).describe("图片描述或绘图提示词"),
@@ -253,7 +253,7 @@ async function createMaliangMcpServer(api: Hono) {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, async (input, extra) => {
     const context = toolContext(extra as McpToolExtra, "images:generate");
-    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接神笔马良 MCP。");
+    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接灵图AI MCP。");
     const deviceGate = requireReportedDevice(context);
     if (deviceGate) return deviceGate;
     try {
@@ -279,7 +279,7 @@ async function createMaliangMcpServer(api: Hono) {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
   }, async (_input, extra) => {
     const context = toolContext(extra as McpToolExtra, "images:generate");
-    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接神笔马良 MCP。");
+    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接灵图AI MCP。");
     const deviceGate = requireReportedDevice(context);
     if (deviceGate) return deviceGate;
     const publicBaseUrl = new URL(context.resource).origin;
@@ -302,7 +302,7 @@ async function createMaliangMcpServer(api: Hono) {
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false }
   }, async ({ uploadId }, extra) => {
     const context = toolContext(extra as McpToolExtra, "images:generate");
-    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接神笔马良 MCP。");
+    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接灵图AI MCP。");
     const deviceGate = requireReportedDevice(context);
     if (deviceGate) return deviceGate;
     const upload = getMcpImageUpload(context.user.id, uploadId);
@@ -320,7 +320,7 @@ async function createMaliangMcpServer(api: Hono) {
   });
 
   server.registerTool("maliang_edit_image", {
-    title: "神笔马良改图",
+    title: "灵图AI改图",
     description: "使用马良历史图片 imageIds 或已完成的一次性上传 uploadIds 提交异步改图任务。返回 jobId 后调用 maliang_get_image_job。",
     inputSchema: {
       prompt: z.string().trim().min(1).max(8000).describe("希望如何修改图片"),
@@ -334,7 +334,7 @@ async function createMaliangMcpServer(api: Hono) {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }, async (input, extra) => {
     const context = toolContext(extra as McpToolExtra, "images:generate");
-    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接神笔马良 MCP。");
+    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接灵图AI MCP。");
     const deviceGate = requireReportedDevice(context);
     if (deviceGate) return deviceGate;
     const imageIds = Array.from(new Set(input.imageIds ?? []));
@@ -388,7 +388,7 @@ async function createMaliangMcpServer(api: Hono) {
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false }
   }, async ({ jobId }, extra) => {
     const context = toolContext(extra as McpToolExtra, "images:generate");
-    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接神笔马良 MCP。");
+    if (!context) return toolError("当前授权缺少 images:generate 权限，请重新连接灵图AI MCP。");
     const deviceGate = requireReportedDevice(context);
     if (deviceGate) return deviceGate;
     try {

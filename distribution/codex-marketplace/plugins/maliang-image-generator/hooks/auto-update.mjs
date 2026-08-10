@@ -690,7 +690,7 @@ async function runAutoUpdate(options) {
       state.lastError = message.slice(0, 1000);
       await writeState(pluginData, state);
       await logEvent(pluginData, `check-failed ${message}`);
-      printHookOutput(updateContext(`神笔马良自动更新检查失败，当前工具继续使用 ${current.version}：${message}`));
+      printHookOutput(updateContext(`灵图AI自动更新检查失败，当前工具继续使用 ${current.version}：${message}`));
       return;
     }
     if (compareSemver(latest.version, current.version) <= 0) {
@@ -698,7 +698,7 @@ async function runAutoUpdate(options) {
       return;
     }
     if (latest.update.compatibility === "incompatible") {
-      const reason = `神笔马良 ${latest.version} 是不兼容更新，未自动覆盖当前 ${current.version}。`;
+      const reason = `灵图AI ${latest.version} 是不兼容更新，未自动覆盖当前 ${current.version}。`;
       await logEvent(pluginData, `incompatible ${current.version} -> ${latest.version}`);
       if (latest.update.critical && latest.update.blockOldVersion) {
         state.blockedReason = `${reason} 此版本已被标记为必须迁移，请先按 /plugin/install.json 完成人工更新。`;
@@ -712,13 +712,13 @@ async function runAutoUpdate(options) {
     }
     if (mode === "notify") {
       await logEvent(pluginData, `available ${current.version} -> ${latest.version}`);
-      printHookOutput(updateContext(`神笔马良有可用更新 ${current.version} -> ${latest.version}；当前模式为 notify，未自动安装。`));
+      printHookOutput(updateContext(`灵图AI有可用更新 ${current.version} -> ${latest.version}；当前模式为 notify，未自动安装。`));
       return;
     }
     const installed = await getInstalledPlugin(runner);
     if (compareSemver(latest.version, installed.version) <= 0) {
       await logEvent(pluginData, `already-installed ${installed.version}; loaded ${current.version}`);
-      printHookOutput(updateContext(`神笔马良 ${installed.version} 已安装；当前任务仍加载 ${current.version}，请新建任务或重启 Codex 后生效。`));
+      printHookOutput(updateContext(`灵图AI ${installed.version} 已安装；当前任务仍加载 ${current.version}，请新建任务或重启 Codex 后生效。`));
       return;
     }
     if (installed.version !== current.version) {
@@ -734,7 +734,7 @@ async function runAutoUpdate(options) {
     state.pendingSessionId = typeof hookInput.session_id === "string" ? hookInput.session_id : undefined;
     await writeState(pluginData, state);
     await logEvent(pluginData, `installed ${current.version} -> ${latest.version}; backup ${result.backupPath}`);
-    printHookOutput(updateContext(`神笔马良已自动更新 ${current.version} -> ${latest.version}。当前工具调用继续使用已加载版本；新版本将在下个任务或重启 Codex 后生效。OAuth 凭据未被清除。`));
+    printHookOutput(updateContext(`灵图AI已自动更新 ${current.version} -> ${latest.version}。当前工具调用继续使用已加载版本；新版本将在下个任务或重启 Codex 后生效。OAuth 凭据未被清除。`));
   } finally {
     await releaseLock();
   }
@@ -760,7 +760,7 @@ async function main() {
         return;
       });
     }
-    printHookOutput(updateContext(`神笔马良自动更新失败，已保留当前版本并继续本次工具调用：${message}`));
+    printHookOutput(updateContext(`灵图AI自动更新失败，已保留当前版本并继续本次工具调用：${message}`));
   }
 }
 var isMainModule = __require.main == __require.module === true || Boolean(process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url));

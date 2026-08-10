@@ -25,7 +25,7 @@ import { deleteStoredFilesIfUnreferenced, readStoredFile, secureBrandingAssetPat
 import type { BrandingAssetRow, BrandingAssetType, BrandingSettingsRow } from "./types";
 import { makeId, normalizeIdList, now } from "./utils";
 
-const DEFAULT_SITE_NAME = "神笔马良";
+const DEFAULT_SITE_NAME = "灵图AI";
 const DEFAULT_LOGO_ASSET_ID = "builtin-logo";
 const DEFAULT_FAVICON_ASSET_ID = "builtin-favicon";
 const DEFAULT_LOGIN_TITLE_LIGHT_ASSET_ID = "builtin-login-title-light";

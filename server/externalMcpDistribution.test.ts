@@ -182,7 +182,7 @@ describe("Maliang Codex plugin distribution", () => {
       "distribution/codex-marketplace/plugins/maliang-image-generator/skills/maliang-image-generator/SKILL.md",
       "utf8"
     );
-    expect(skill).toContain("![神笔马良生成结果](/C:/absolute/path/image.png)");
+    expect(skill).toContain("![灵图AI生成结果](/C:/absolute/path/image.png)");
     expect(skill).toContain("Never put a native backslash path directly inside the Markdown image target");
     expect(skill).toContain("mcp__maliang_local__upload_local_image");
     expect(skill).toContain("mcp__maliang_local__save_image_result");
@@ -484,7 +484,7 @@ foreach ($value in @(
       publicBaseUrl: "https://maliang.example.com",
       install: {
         href: "https://maliang.example.com/install",
-        instruction: "访问 https://maliang.example.com/install，安装神笔马良。"
+        instruction: "访问 https://maliang.example.com/install，安装灵图AI。"
       }
     });
   });
@@ -536,7 +536,7 @@ foreach ($value in @(
     expect(manifest.choices.codexMcpOnly.install).toBe("remote-mcp");
     expect(manifest.choices.otherClients.install).toBe("remote-mcp");
     expect(manifest.choices.otherClients.clientSpecificPluginAvailable).toBe(false);
-    expect(manifest.choices.otherClients.futurePluginRule).toContain("专用神笔马良插件包");
+    expect(manifest.choices.otherClients.futurePluginRule).toContain("专用灵图AI插件包");
     expect(manifest.choices.otherClients.forbidden).toContain("不得把 Codex 插件包安装到其他客户端");
     expect(manifest.manualRemoteMcp.supported).toBe(true);
     expect(manifest.manualRemoteMcp.format).toBe("mcpServers-json");
@@ -563,7 +563,7 @@ foreach ($value in @(
     const html = await response.text();
     expect(html).not.toContain('<nav class="nav">');
     expect(html).not.toContain('<span class="eyebrow">');
-    expect(html).toContain('<div class="title-row"><img class="title-logo" src="/image/logo-small.webp" alt=""><h1>安装神笔马良插件</h1>');
+    expect(html).toContain('<div class="title-row"><img class="title-logo" src="/image/logo-small.webp" alt=""><h1>安装灵图AI插件</h1>');
     expect(html).toContain("Claude Code、TRAE Work、WorkBuddy");
     expect(html).toContain('id="manual-mcp-title">手动添加 MCP Server</h2>');
     expect(html).toContain("客户端支持 JSON 配置时，复制下面的内容并粘贴");

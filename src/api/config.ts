@@ -232,6 +232,10 @@ export const configApi = {
       method: "PUT",
       body: JSON.stringify({ publicBaseUrl })
     }),
+  objectStorage: () => request<{ settings: { enabled: boolean; provider: "local" | "cos"; secretId: string; secretKey: string; bucket: string; region: string; basePath: string; publicBaseUrl: string; updatedAt: string } }>("/api/config/object-storage"),
+  saveObjectStorage: (settings: Record<string, unknown>) => request<{ settings: { enabled: boolean; provider: "local" | "cos"; secretId: string; secretKey: string; bucket: string; region: string; basePath: string; publicBaseUrl: string; updatedAt: string } }>("/api/config/object-storage", { method: "PUT", body: JSON.stringify(settings) }),
+  testObjectStorage: () => request<{ ok: boolean }>("/api/config/object-storage/test", { method: "POST" }),
+  migrateObjectStorage: () => request<{ migrated: number; total: number }>("/api/config/object-storage/migrate", { method: "POST" }),
   externalMcpSettings: () => request<ConfigExternalMcpSettingsResult>("/api/config/external-mcp-settings"),
   saveExternalMcpSettings: (settings: Pick<ExternalMcpSettings, "accessTokenTtlDays" | "refreshTokenTtlDays">) =>
     request<ConfigExternalMcpSettingsResult>("/api/config/external-mcp-settings", {

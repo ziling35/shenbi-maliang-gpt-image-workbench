@@ -54,6 +54,7 @@ export const CONFIG_TAB_VALUES = [
   "sms",
   "starterCopy",
   "branding",
+  "storage",
   "imageMode",
   "cpa",
   "backup",
@@ -90,6 +91,7 @@ export const CONFIG_NAV_ITEMS: ConfigNavItem[] = [
   { value: "sms", label: "短信配置", Icon: Smartphone },
   { value: "starterCopy", label: "空白页文案", Icon: Bot },
   { value: "branding", label: "站点与品牌", Icon: ImageIcon },
+  { value: "storage", label: "对象存储", Icon: Database },
   { value: "imageMode", label: "模式配置", Icon: SlidersHorizontal },
   { value: "cpa", label: "CPA 同步", Icon: RefreshCw },
   { value: "backup", label: "数据备份", Icon: Archive },
@@ -111,7 +113,7 @@ export const CONFIG_NAV_CATEGORIES: Array<{
   { value: "members", label: "组织", items: ["users", "teams"] },
   { value: "content", label: "内容", items: ["contentCategories", "soundManagement", "assetReviews", "caseReviews", "starterCopy", "changelog"] },
   { value: "generation", label: "生成", items: ["imageAccounts", "providers", "promptOptimizer", "safetyReview", "imageMode", "cpa"] },
-  { value: "system", label: "系统", items: ["billing", "branding", "smtp", "sms", "backup", "proxy", "debug", "modelLogs", "requests", "audit"] }
+  { value: "system", label: "系统", items: ["billing", "branding", "storage", "smtp", "sms", "backup", "proxy", "debug", "modelLogs", "requests", "audit"] }
 ];
 
 export function isConfigTabValue(value: string | null | undefined): value is ConfigTabValue {

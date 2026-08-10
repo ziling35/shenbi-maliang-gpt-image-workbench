@@ -580,6 +580,7 @@ function AssistantImageGroup({
   const [thumbsOverflowing, setThumbsOverflowing] = useState(false);
   const mainImageRef = useRef<HTMLDivElement | null>(null);
   const thumbsRef = useRef<HTMLDivElement | null>(null);
+  const previewPreloadsRef = useRef<HTMLImageElement[]>([]);
   const { showToast } = useToast();
   const { t } = useI18n();
   const maxIndex = Math.max(0, imageMessages.length - 1);
@@ -598,6 +599,7 @@ function AssistantImageGroup({
     ? sharedResultMessages
     : imageMessages;
   const longImage = isLongAssistantImage(activeMessage);
+  const previewUrlsKey = imageMessages.map((message) => messagePreviewUrl(message)).join("\u0000");
   const imageGroupStyle = {
     ...(thumbMaxHeight ? { "--image-result-thumb-max-height": `${Math.round(thumbMaxHeight)}px` } : {})
   } as CSSProperties;
@@ -617,6 +619,16 @@ function AssistantImageGroup({
   useEffect(() => {
     setActiveIndex((value) => Math.min(value, Math.max(0, imageMessages.length - 1)));
   }, [imageMessages.length]);
+
+  useEffect(() => {
+    previewPreloadsRef.current = imageMessages.map((message) => {
+      const preload = new Image();
+      preload.decoding = "async";
+      preload.src = messagePreviewUrl(message);
+      return preload;
+    });
+    return () => { previewPreloadsRef.current = []; };
+  }, [previewUrlsKey]);
 
   useLayoutEffect(() => {
     updateThumbLayout();
@@ -672,7 +684,7 @@ function AssistantImageGroup({
                 aria-label={t("chatMessages.viewNthImage", { index: index + 1 })}
                 aria-pressed={index === currentIndex}
               >
-                <img src={messageThumbnailUrl(message)} alt="" />
+                <img src={messageThumbnailUrl(message)} alt="" loading="eager" decoding="async" />
                 <span className="image-result-thumb-index">{index + 1}</span>
               </button>
             ))}
@@ -694,7 +706,7 @@ function AssistantImageGroup({
             }}
             aria-label={canOpenEditor ? t("pages.images.editImage") : t("imageLightbox.preview")}
           >
-            <img src={messagePreviewUrl(activeMessage)} alt={activeMessage.content} onLoad={updateThumbLayout} />
+            <img src={messagePreviewUrl(activeMessage)} alt={activeMessage.content} loading="eager" decoding="async" onLoad={updateThumbLayout} />
           </button>
           <AssistantImageActions
             image={image}

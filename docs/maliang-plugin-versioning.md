@@ -1,9 +1,9 @@
-# 神笔马良 Codex 插件版本与更新设计
+# 灵图AI Codex 插件版本与更新设计
 
 ## 目标
 
 - 登录、安装和更新流程由机器清单与测试约束，不依赖模型临场补全步骤。
-- 更新默认自动执行，但只作用于神笔马良自己的 stable Marketplace 和精确插件 selector，不覆盖其他 Marketplace 或 MCP 配置。
+- 更新默认自动执行，但只作用于灵图AI自己的 stable Marketplace 和精确插件 selector，不覆盖其他 Marketplace 或 MCP 配置。
 - 下载或校验失败不触碰当前版本；切换后验证失败可以恢复旧版本。
 - 兼容更新尽量复用现有 OAuth，只有刷新后的 MCP 明确返回 `Auth required` 才重新授权。
 
@@ -63,7 +63,7 @@
 
 ### 3. 切换
 
-1. 将当前神笔马良 Marketplace 目录改名为带旧版本和时间戳的备份。
+1. 将当前灵图AI Marketplace 目录改名为带旧版本和时间戳的备份。
 2. 把暂存目录原子切换到固定 durable 目录。
 3. 执行 `codex plugin add maliang-image-generator@maliang-internal --json` 刷新精确插件；当前 Codex CLI 没有独立的 `plugin update` 命令，因此不能编造该命令，也不能用只面向 Git Marketplace 的 `marketplace upgrade` 代替本地目录更新。
 4. 不删除或修改其他插件、Marketplace 和全局 MCP。

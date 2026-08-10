@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Fragment, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Info, X } from "lucide-react";
@@ -412,13 +412,13 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
-  function showToast(message: string, tone: ToastItem["tone"] = "success") {
+  const showToast = useCallback((message: string, tone: ToastItem["tone"] = "success") => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
     setItems((value) => [...value, { id, message, tone }].slice(-3));
     window.setTimeout(() => {
       setItems((value) => value.filter((item) => item.id !== id));
     }, 2600);
-  }
+  }, []);
 
   return (
     <ToastContext.Provider value={{ showToast }}>

@@ -48,7 +48,7 @@ export function smtpSettings(includeSecret = false): SmtpSettings {
       secure: true,
       username: "",
       passwordSecret: "",
-      fromName: "神笔马良",
+      fromName: "灵图AI",
       fromEmail: "",
       testRecipientEmail: "",
       updatedAt: ""
@@ -78,7 +78,7 @@ export function saveSmtpSettings(raw: Record<string, unknown>) {
   const secure = Boolean(raw.secure);
   const username = String(raw.username ?? "").trim();
   const passwordSecret = String(raw.passwordSecret ?? "");
-  const fromName = String(raw.fromName ?? "神笔马良").trim() || "神笔马良";
+  const fromName = String(raw.fromName ?? "灵图AI").trim() || "灵图AI";
   const fromEmail = String(raw.fromEmail ?? "").trim().toLowerCase();
   const testRecipientEmail = String(raw.testRecipientEmail ?? "").trim().toLowerCase();
   if (enabled && !host) throw new Error("启用 SMTP 必须填写服务器地址");
@@ -171,7 +171,7 @@ function verificationSubject(purpose: "register" | "password_reset") {
 }
 
 function verificationMailSubject(settings: SmtpSettings, purpose: "register" | "password_reset", test = false) {
-  const prefix = settings.fromName.trim() || "神笔马良";
+  const prefix = settings.fromName.trim() || "灵图AI";
   return `${prefix}${verificationSubject(purpose)}${test ? "测试" : ""}`;
 }
 
@@ -202,7 +202,7 @@ function verificationHtml(
   hasBackground: boolean,
   hasLogo: boolean
 ) {
-  const brand = settings.fromName.trim() || "神笔马良";
+  const brand = settings.fromName.trim() || "灵图AI";
   const safeBrand = escapeHtml(brand);
   const safeCode = escapeHtml(code);
   const title = purpose === "register" ? `欢迎使用 ${brand}` : `${brand} 密码重置`;

@@ -15,6 +15,7 @@ export default function App() {
   const navigate = useNavigate();
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const branding = useQuery({ queryKey: ["branding"], queryFn: api.branding });
+  useQuery({ queryKey: ["registration-status"], queryFn: api.registrationStatus, staleTime: 5 * 60 * 1000 });
   const loggedIn = Boolean(me.data?.user);
   const sharedRoute = /^\/share\/[^/]+\/?$/.test(location.pathname);
   const searchParams = new URLSearchParams(location.search);

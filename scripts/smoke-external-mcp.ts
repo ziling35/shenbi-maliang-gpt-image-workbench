@@ -210,7 +210,7 @@ try {
   if (!reportData?.reported || reportData.deviceName !== deviceName) throw new Error("Device reporting did not persist the real hostname");
   if (!accountData?.authenticated || accountData.user?.username !== "smoke-user") throw new Error("Account status did not resolve the OAuth principal");
   if (registration.application_type !== "native") throw new Error("DCR application_type was not returned");
-  if (installManifest.userInstruction !== `访问 ${metadata.issuer}/install，安装神笔马良。`) throw new Error("User installation instruction changed unexpectedly");
+  if (installManifest.userInstruction !== `访问 ${metadata.issuer}/install，安装灵图AI。`) throw new Error("User installation instruction changed unexpectedly");
   if (installManifest.execution?.mode !== "execute-installation") throw new Error("Agent execution policy is missing");
   if (pluginManifest.version !== expectedPluginVersion) throw new Error("Plugin manifest version does not match plugin.json");
   if (serverVersion?.version !== pluginManifest.version) throw new Error("MCP server version did not match the plugin version source");

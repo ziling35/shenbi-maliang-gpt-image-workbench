@@ -100,7 +100,7 @@
 
 ### oauth_clients
 
-神笔马良 Remote MCP 的 OAuth 2.0 动态注册客户端。客户端是公开 PKCE 客户端，不保存 Client Secret。
+灵图AI Remote MCP 的 OAuth 2.0 动态注册客户端。客户端是公开 PKCE 客户端，不保存 Client Secret。
 
 | 字段 | 说明 |
 | --- | --- |
@@ -736,7 +736,7 @@ AI 客户端改图时使用的一次性本地图片上传记录。上传链接�
 
 ### external_mcp_signing_settings
 
-神笔马良 Remote MCP 图片结果原图链接的签名配置。签名链接绑定指定用户、图片和 OAuth 授权关系，默认 1 小时失效；连接失效或移除后立即不可再下载。签名密钥不会进入 MCP 工具结果、前端接口或日志。
+灵图AI Remote MCP 图片结果原图链接的签名配置。签名链接绑定指定用户、图片和 OAuth 授权关系，默认 1 小时失效；连接失效或移除后立即不可再下载。签名密钥不会进入 MCP 工具结果、前端接口或日志。
 
 | 字段 | 说明 |
 | --- | --- |
@@ -787,7 +787,7 @@ AI 客户端改图时使用的一次性本地图片上传记录。上传链接�
 | 字段 | 说明 |
 | --- | --- |
 | `id` | 固定为 `default` |
-| `site_name` | 站点名称，默认 `神笔马良` |
+| `site_name` | 站点名称，默认 `灵图AI` |
 | `active_logo_asset_id` | 当前工作台和配置中心 Logo 资源 |
 | `active_favicon_asset_id` | 当前浏览器图标资源 |
 | `active_login_title_light_asset_id` | 浅色登录页标题图资源 |

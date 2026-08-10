@@ -226,6 +226,23 @@ export type PromptOptimizerModelCatalog = {
   defaultSelection: { providerId: string; providerName: string; model: string } | null;
   providers: Array<{ providerId: string; providerName: string; models: string[] }>;
 };
+
+export type GuestImageProvider = {
+  id: string;
+  name: string;
+  model: string;
+  channel: "cpa" | "chatgpt_web" | "api";
+  virtual?: boolean;
+  sizes: string[];
+  qualities: string[];
+  defaultSize: string;
+  defaultQuality: string;
+};
+
+export type GuestWorkbenchConfig = {
+  providers: GuestImageProvider[];
+  promptOptimizerModels: PromptOptimizerModelCatalog;
+};
 export type PromptTextOptimizeResponse = {
   prompt: string;
   negativePrompt?: string;
@@ -614,6 +631,7 @@ export type ExternalMcpConnection = {
 };
 
 export const api = {
+  guestWorkbenchConfig: () => request<GuestWorkbenchConfig>("/api/guest-workbench-config"),
   promptOptimizerModels: (usage: "prompt.optimize" | "template.optimize" = "prompt.optimize") => request<PromptOptimizerModelCatalog>(`/api/prompt-optimizer/models?usage=${encodeURIComponent(usage)}`),
   billingAccount: () => request<{ balanceCents: number; payment: { enabled: boolean; paymentTypes: string[]; minimumRechargeCents: number }; prices: Array<{ model: string; price_cents: number }>; textPrices:Array<{model:string;price_cents:number}>; orders: Array<{ id: string; amount_cents: number; status: string; payment_type: string; created_at: string; paid_at: string | null }>; ledger: Array<{ id: string; type: string; amount_cents: number; balance_after_cents: number; description: string; created_at: string }> }>("/api/billing/account"),
   createRecharge: (payload: { amount: number; type: string }) => request<{ orderId: string; paymentUrl: string }>("/api/billing/recharge", { method: "POST", body: JSON.stringify(payload) }),

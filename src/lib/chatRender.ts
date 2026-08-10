@@ -99,6 +99,9 @@ export function isServerEchoOfPending(message: Message, pending: Message) {
   if (message.role !== "user" || pending.role !== "user") return false;
   if (message.id === pending.id || message.content !== pending.content) return false;
 
+  const pendingClientRequestId = messageMetadataString(pending, "clientRequestId");
+  if (pendingClientRequestId) return messageMetadataString(message, "clientRequestId") === pendingClientRequestId;
+
   const pendingMode = messageMetadataString(pending, "mode");
   if (pendingMode && messageMetadataString(message, "mode") !== pendingMode) return false;
 

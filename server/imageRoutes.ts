@@ -514,25 +514,96 @@ async function saveProviderImagesWithRetry({
   let firstError: unknown = null;
   const retryCount = retryCountInput ?? resolveImageResultRetryCount(imageGenerationSettings().resultRetryCount);
   const maxAttempts = retryCount + 1;
+  const saveResponseImages = async (provider: RuntimeProviderRow, responseJson: unknown, responseAttemptNo: number) => {
+    onResponseJson?.(responseJson);
+    try {
+      return await saveProviderImageResults(responseJson, provider, () => makeId("img"), userId, sessionId);
+    } catch (error) {
+      markProviderRequestPostProcessFailure({
+        provider,
+        operation: mode,
+        jobId,
+        attemptNo: responseAttemptNo,
+        error: errorMessage(error, `${imageOperationLabel(mode)}失败`),
+        responseSnapshot: providerResponseSnapshot(responseJson)
+      });
+      throw error;
+    }
+  };
+  const requestedImageCount = requestedImageCountFromPayload(requestPayload);
+  if (requestedImageCount > 1) {
+    const singleImagePayload = singleImageSupplementPayload(requestPayload);
+    let completedImageCount = 0;
+    const tasks = Array.from({ length: requestedImageCount }, (_, imageSlot) => (async () => {
+      let slotFirstError: unknown = null;
+      for (let slotAttempt = 1; slotAttempt <= maxAttempts; slotAttempt += 1) {
+        if (signal?.aborted) throw new Error("图片任务已取消");
+        try {
+          const result = await callProviderChain<Awaited<ReturnType<typeof saveProviderImageResults>>>(
+            providers,
+            mode,
+            singleImagePayload,
+            {
+              userId,
+              jobId,
+              attemptNo: slotAttempt,
+              maxAttempts,
+              isRetry: slotAttempt > 1,
+              signal
+            },
+            ({ provider, responseJson }) => saveResponseImages(provider, responseJson, slotAttempt)
+          );
+          const returnedImages = result.result ?? [];
+          if (returnedImages.length === 0) throw new Error(`${imageOperationLabel(mode)}失败：渠道没有返回可保存的图片`);
+          const acceptedImages = returnedImages.slice(0, 1);
+          const extraImages = returnedImages.slice(1);
+          if (extraImages.length > 0) await deleteStoredFilesIfUnreferenced(extraImages.map((image) => image.file.path));
+          completedImageCount += acceptedImages.length;
+          await onSavedImages?.({
+            provider: result.provider,
+            savedImages: acceptedImages,
+            completedImageCount,
+            requestedImageCount,
+            supplementing: completedImageCount < requestedImageCount,
+            attemptNo: slotAttempt
+          });
+          return { ...result, savedImages: acceptedImages, attemptNo: slotAttempt };
+        } catch (error) {
+          if (providerRequestWasCancelled(error, signal)) throw error;
+          if (slotAttempt < maxAttempts) {
+            slotFirstError ??= error;
+            console.warn(`第 ${imageSlot + 1} 张图片生成失败，自动重试 ${slotAttempt}/${retryCount}`, errorMessage(error, `${imageOperationLabel(mode)}失败`));
+            continue;
+          }
+          throw slotFirstError ?? error;
+        }
+      }
+      throw new Error(`${imageOperationLabel(mode)}失败`);
+    })());
+    const settledResults = await Promise.allSettled(tasks);
+    if (signal?.aborted) throw new Error("图片任务已取消");
+    const successfulResults = settledResults
+      .filter((result): result is PromiseFulfilledResult<Awaited<(typeof tasks)[number]>> => result.status === "fulfilled")
+      .map((result) => result.value);
+    if (successfulResults.length === 0) {
+      const failedResult = settledResults.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      throw failedResult?.reason ?? new Error(`${imageOperationLabel(mode)}失败`);
+    }
+    if (successfulResults.length < requestedImageCount) {
+      console.warn(`独立图片请求完成后数量仍不足：期望 ${requestedImageCount} 张，实际 ${successfulResults.length} 张`);
+    }
+    return {
+      provider: successfulResults[0].provider,
+      responseJson: { batch_responses: successfulResults.map((result) => result.responseJson) },
+      savedImages: successfulResults.flatMap((result) => result.savedImages),
+      attemptNo: Math.max(...successfulResults.map((result) => result.attemptNo)),
+      retryCount,
+      maxAttempts
+    };
+  }
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (signal?.aborted) throw new Error("图片任务已取消");
     try {
-      const saveResponseImages = async (provider: RuntimeProviderRow, responseJson: unknown, responseAttemptNo: number) => {
-        onResponseJson?.(responseJson);
-        try {
-          return await saveProviderImageResults(responseJson, provider, () => makeId("img"), userId, sessionId);
-        } catch (error) {
-          markProviderRequestPostProcessFailure({
-            provider,
-            operation: mode,
-            jobId,
-            attemptNo: responseAttemptNo,
-            error: errorMessage(error, `${imageOperationLabel(mode)}失败`),
-            responseSnapshot: providerResponseSnapshot(responseJson)
-          });
-          throw error;
-        }
-      };
       const { provider, responseJson, result: initialSavedImages } = await callProviderChain<Awaited<ReturnType<typeof saveProviderImageResults>>>(
         providers,
         mode,
@@ -550,7 +621,6 @@ async function saveProviderImagesWithRetry({
       if (!initialSavedImages) {
         throw new Error(`${imageOperationLabel(mode)}失败：渠道没有返回可保存的图片`);
       }
-      const requestedImageCount = requestedImageCountFromPayload(requestPayload);
       const savedImages = [...initialSavedImages];
       const responseJsons = [responseJson];
       const extraInitialImages = savedImages.splice(requestedImageCount);
@@ -931,6 +1001,7 @@ type StoredImageJobRow = {
   result_image_id: string | null;
   request_json: string | null;
   response_json: string | null;
+  client_request_id?: string | null;
   auto_retry_count: number | null;
   manual_retry_count: number | null;
   recovery_count: number | null;
@@ -1970,6 +2041,17 @@ api.post("/images/generate", async (c) => {
   if (!user) return c.json({ error: "未登录" }, 401);
   const body = await c.req.json().catch(() => ({}));
   const clientRequestId = requestClientRequestId(body);
+  if (clientRequestId) {
+    const existingJob = getOne<StoredImageJobRow>(
+      appDb,
+      "select * from image_jobs where user_id = ? and client_request_id = ? order by created_at desc limit 1",
+      user.id,
+      clientRequestId
+    );
+    if (existingJob) {
+      return c.json({ sessionId: existingJob.session_id, job: serializeJob(existingJob), image: null, images: [] }, existingJob.status === "running" ? 202 : 200);
+    }
+  }
   cleanupExpiredImageJobCancelIntents();
   const prompt = String(body.prompt ?? "").trim();
   const caseItemId = String(body.caseItemId ?? "").trim();
@@ -2240,6 +2322,17 @@ api.post("/images/edit", async (c) => {
   if (!user) return c.json({ error: "未登录" }, 401);
   const body = await c.req.json().catch(() => ({}));
   const clientRequestId = requestClientRequestId(body);
+  if (clientRequestId) {
+    const existingJob = getOne<StoredImageJobRow>(
+      appDb,
+      "select * from image_jobs where user_id = ? and client_request_id = ? order by created_at desc limit 1",
+      user.id,
+      clientRequestId
+    );
+    if (existingJob) {
+      return c.json({ sessionId: existingJob.session_id, job: serializeJob(existingJob), image: null, images: [] }, existingJob.status === "running" ? 202 : 200);
+    }
+  }
   cleanupExpiredImageJobCancelIntents();
   const prompt = String(body.prompt ?? "").trim();
   const caseItemId = String(body.caseItemId ?? "").trim();

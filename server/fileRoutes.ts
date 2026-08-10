@@ -9,6 +9,7 @@ import { getOrCreateImageDerivative, normalizeImageVariant, type ImageDerivative
 import { parseImageBatchIds } from "./imageBatch";
 import { imageExtensionFromMime, mimeTypeFromPath } from "./imageFiles";
 import { readStoredFile } from "./secureFiles";
+import { getStoredObjectUrl } from "./objectStorage";
 import { imageOriginPromptsByImageIds } from "./serializers";
 import type { AssetRow, ImageAssetReferenceRow, ImageRow, MessageSourceReferenceRow, UserAvatarHistoryRow, UserRow } from "./types";
 import { createHash } from "node:crypto";
@@ -259,12 +260,16 @@ async function storedImageResponse(
   if (variant !== "original") {
     try {
       const derivative = await getOrCreateImageDerivative({ sourceType, sourceId, path }, variant);
+      const directUrl = await getStoredObjectUrl(derivative.path);
+      if (directUrl) return Response.redirect(directUrl, 302);
       return imageResponse(derivative.buffer, derivative.mimeType);
     } catch (error) {
       console.warn("图片派生图读取失败，回退原图", sourceType, sourceId, variant, error);
     }
   }
   try {
+    const directUrl = await getStoredObjectUrl(path);
+    if (directUrl) return Response.redirect(directUrl, 302);
     return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path));
   } catch (error) {
     console.warn("图片文件读取失败", path, error);

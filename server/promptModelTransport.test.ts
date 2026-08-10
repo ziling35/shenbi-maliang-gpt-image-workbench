@@ -7,7 +7,7 @@ import {
 } from "./promptModelTransport";
 import type { PromptOptimizerProviderRow } from "./promptOptimizerRoutes";
 
-function provider(): PromptOptimizerProviderRow {
+function provider(overrides: Partial<PromptOptimizerProviderRow> = {}): PromptOptimizerProviderRow {
   return {
     id: "transport-test",
     name: "Transport Test",
@@ -28,7 +28,8 @@ function provider(): PromptOptimizerProviderRow {
     retry_count: 0,
     sort_order: 1,
     created_at: "",
-    updated_at: ""
+    updated_at: "",
+    ...overrides
   };
 }
 
@@ -40,6 +41,55 @@ test("extracts text from a Responses API output", () => {
 
 test("recognizes the Chat Completions unsupported error", () => {
   expect(shouldRetryWithResponses("This model is not supported on the Chat Completions endpoint")).toBeTrue();
+});
+
+test("parses Responses-style deltas from an SSE stream", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response([
+    "event: response.output_text.delta",
+    'data: {"type":"response.output_text.delta","delta":"兼容流成功"}',
+    "",
+    "data: [DONE]",
+    ""
+  ].join("\n"), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" }
+  })) as unknown as typeof fetch;
+  try {
+    const result = await requestPromptProviderText({
+      provider: provider({ id: "responses-sse-test", model: "responses-sse-model" }),
+      messages: [{ role: "user", content: "测试流" }]
+    });
+    expect(result.content).toBe("兼容流成功");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("retries a successful HTTP response when the model stream is empty", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+  globalThis.fetch = (async () => {
+    requestCount += 1;
+    const body = requestCount === 1
+      ? "data: [DONE]\n\n"
+      : 'data: {"choices":[{"delta":{"content":"自动重试成功"}}]}\n\ndata: [DONE]\n\n';
+    return new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  }) as unknown as typeof fetch;
+  try {
+    const result = await requestPromptProviderText({
+      provider: provider({ id: "empty-retry-test", model: "empty-retry-model", retry_count: 1 }),
+      messages: [{ role: "user", content: "测试重试" }]
+    });
+    expect(result.content).toBe("自动重试成功");
+    expect(result.attemptCount).toBe(2);
+    expect(requestCount).toBe(2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("falls back from Chat Completions to Responses", async () => {

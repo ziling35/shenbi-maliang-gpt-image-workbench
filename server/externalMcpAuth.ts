@@ -289,10 +289,10 @@ function privateOrLoopbackHostname(hostname: string) {
 
 export function validateMaliangPublicOrigin(value: string) {
   const origin = httpOrigin(value);
-  if (!origin) throw new Error("神笔马良公开地址必须是有效的 HTTP(S) origin");
+  if (!origin) throw new Error("灵图AI公开地址必须是有效的 HTTP(S) origin");
   const url = new URL(origin);
   if (url.protocol === "http:" && !privateOrLoopbackHostname(url.hostname)) {
-    throw new Error("神笔马良公开 MCP/OAuth 地址必须使用 HTTPS；HTTP 仅允许本机或私有局域网测试地址");
+    throw new Error("灵图AI公开 MCP/OAuth 地址必须使用 HTTPS；HTTP 仅允许本机或私有局域网测试地址");
   }
   return origin;
 }
@@ -362,7 +362,7 @@ export function resolveMaliangPublicBaseUrl(input: {
   const configuredValue = String(input.configuredUrl ?? "").trim();
   if (configuredValue) return validateMaliangPublicOrigin(configuredValue);
   const requestOrigin = httpOrigin(input.requestUrl);
-  if (!requestOrigin) throw new Error("无法从当前请求解析神笔马良公开地址");
+  if (!requestOrigin) throw new Error("无法从当前请求解析灵图AI公开地址");
   let resolvedOrigin = requestOrigin;
   if (input.trustProxy) {
     const request = new URL(input.requestUrl);
@@ -490,7 +490,7 @@ export function mcpUnauthorized(c: Context, description = "Maliang MCP authoriza
     "WWW-Authenticate",
     `Bearer resource_metadata="${maliangProtectedResourceMetadataUrl(c)}", error="invalid_token", error_description="${description}"`
   );
-  return c.json({ error: "unauthorized", error_description: "需要有效的神笔马良 MCP 授权" }, 401);
+  return c.json({ error: "unauthorized", error_description: "需要有效的灵图AI MCP 授权" }, 401);
 }
 
 export async function requireImageRouteUser(c: Context) {

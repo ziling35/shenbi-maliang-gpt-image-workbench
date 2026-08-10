@@ -1,6 +1,6 @@
 # AI 客户端安装入口
 
-神笔马良对用户只提供一个安装地址，复制指令保持为简短的“访问安装地址，安装神笔马良”。智能体读取地址后，会从机器安装清单的 `execution` 策略得知必须继续修改当前客户端的真实配置、触发加载并完成验证，不能只总结页面或把配置步骤交回用户。用户只负责浏览器账号登录、OAuth 允许，以及操作系统明确要求的权限确认。
+灵图AI对用户只提供一个安装地址，复制指令保持为简短的“访问安装地址，安装灵图AI”。智能体读取地址后，会从机器安装清单的 `execution` 策略得知必须继续修改当前客户端的真实配置、触发加载并完成验证，不能只总结页面或把配置步骤交回用户。用户只负责浏览器账号登录、OAuth 允许，以及操作系统明确要求的权限确认。
 
 - `/install`：AI 读取机器清单，并根据当前客户端能力选择 Codex 插件或 Remote MCP。
 
@@ -11,7 +11,7 @@
 - Codex 默认安装完整 Codex 插件。插件已包含 Skill 与 Remote MCP，不重复添加全局 `maliang` MCP。
 - Codex 用户明确说明“只安装 MCP”时，仅安装 Remote MCP。
 - 当前只提供 Codex 专用插件包；Claude Code、TRAE Work、WorkBuddy 和其他客户端统一安装 Remote MCP，不能复用 Codex 插件包。
-- 以后为某个客户端提供专用神笔马良插件包时，再把该客户端及其插件分发信息加入机器清单，由模型自动选择。
+- 以后为某个客户端提供专用灵图AI插件包时，再把该客户端及其插件分发信息加入机器清单，由模型自动选择。
 
 机器清单以当前正在执行任务的客户端身份为准，不能仅因同一台电脑存在 `codex` 命令就把 Codex 插件安装到其他 App。
 
@@ -75,7 +75,7 @@ WorkBuddy 桌面端的 Remote MCP OAuth 可以使用 `workbuddy://workbuddy/mcp/
 
 插件版本只从 `.codex-plugin/plugin.json` 读取，服务端 latest 清单、动态 ZIP 文件名、ZIP 内清单和静态打包脚本不再各自维护版本常量。`/plugin/latest.json` 提供 stable 版本、SHA-256 和机器可读更新元数据；`/plugin/install.json` 提供检查、应用、回滚与 OAuth 保留规则。
 
-更新默认使用受信任的插件 `PreToolUse` Hook 自动执行：调用马良工具时检查 stable 版本，24 小时内最多联网一次。自动更新清单、ZIP、插件 homepage 与 MCP resource 必须全部位于同一个受信任 origin：公开与生产地址强制使用 HTTPS；用户明确选择的 `localhost`、loopback、私有局域网、link-local、CGNAT 或 IPv6 ULA 开发地址可以使用 HTTP。公开 HTTP 部署即使清单和 ZIP 哈希一致也只保留当前版本并安全跳过自动更新。兼容更新按 SemVer 比较并事务式替换本地 Marketplace，普通更新失败保留旧版且不中断图片调用，新版本在下个任务或重启 Codex 后生效；用户仍可显式切换为 `notify` 或 `off`。当前 Codex CLI 没有独立的 `plugin update` 命令，本地 Marketplace 通过下载校验、同级暂存、旧目录备份、固定目录切换和精确 selector 刷新完成；验证失败恢复旧目录。详细设计见 [神笔马良 Codex 插件版本与更新设计](./maliang-plugin-versioning.md)。
+更新默认使用受信任的插件 `PreToolUse` Hook 自动执行：调用马良工具时检查 stable 版本，24 小时内最多联网一次。自动更新清单、ZIP、插件 homepage 与 MCP resource 必须全部位于同一个受信任 origin：公开与生产地址强制使用 HTTPS；用户明确选择的 `localhost`、loopback、私有局域网、link-local、CGNAT 或 IPv6 ULA 开发地址可以使用 HTTP。公开 HTTP 部署即使清单和 ZIP 哈希一致也只保留当前版本并安全跳过自动更新。兼容更新按 SemVer 比较并事务式替换本地 Marketplace，普通更新失败保留旧版且不中断图片调用，新版本在下个任务或重启 Codex 后生效；用户仍可显式切换为 `notify` 或 `off`。当前 Codex CLI 没有独立的 `plugin update` 命令，本地 Marketplace 通过下载校验、同级暂存、旧目录备份、固定目录切换和精确 selector 刷新完成；验证失败恢复旧目录。详细设计见 [灵图AI Codex 插件版本与更新设计](./maliang-plugin-versioning.md)。
 
 `0.3.0` 是首个带自动更新 Hook 的版本。已经安装的 `0.2.x` 或更早版本不会凭空获得本地 Hook，发布后需要先人工更新一次；完成这次引导更新并信任 Hook 后，后续兼容 stable 版本才会在使用时自动更新。
 
@@ -95,7 +95,7 @@ Remote MCP 运行在马良服务器，不能直接读取 Codex 所在电脑的�
 
 ## Windows、macOS 与 Linux
 
-三个平台使用同一个神笔马良插件 ZIP、同一个 Remote MCP endpoint、同一套 OAuth PKCE，以及同一份普通 ESM 本地帮助器 `maliang-helper.mjs`，不为不同平台或语言维护另一套上传或下载实现。Remote MCP、OAuth、生成、改图与任务轮询不依赖本地脚本运行时；Codex 用 Node 20+ 从插件根目录启动 bundled `maliang_local` stdio MCP，本地附件上传和原图保存都由该 MCP 调用同一份帮助器完成。Node 不可用时，本地附件只能使用一次性上传页；生成结果交付仍不得降级到浏览器，`maliang_local` 不可用或保存失败时只能准确报告交付未完成。
+三个平台使用同一个灵图AI插件 ZIP、同一个 Remote MCP endpoint、同一套 OAuth PKCE，以及同一份普通 ESM 本地帮助器 `maliang-helper.mjs`，不为不同平台或语言维护另一套上传或下载实现。Remote MCP、OAuth、生成、改图与任务轮询不依赖本地脚本运行时；Codex 用 Node 20+ 从插件根目录启动 bundled `maliang_local` stdio MCP，本地附件上传和原图保存都由该 MCP 调用同一份帮助器完成。Node 不可用时，本地附件只能使用一次性上传页；生成结果交付仍不得降级到浏览器，`maliang_local` 不可用或保存失败时只能准确报告交付未完成。
 
 `0.4.0` 是本地能力收敛到单一 `.mjs` 权威实现的首个版本。过渡期继续随包保留 `auto-update.ts` 与 `windows-update-gate.ts`，只用于让已安装的 `0.3.x` 校验并升级；业务上传和保存不再运行 TypeScript 文件，也不维护完整 Python 双实现。
 

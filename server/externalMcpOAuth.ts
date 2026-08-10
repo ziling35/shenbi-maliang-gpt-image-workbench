@@ -700,7 +700,7 @@ export function externalMcpAuthorizationPage(input: {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>授权连接神笔马良</title>
+  <title>授权连接灵图AI</title>
   <link rel="icon" type="image/webp" href="/image/logo-small.webp" />
   <style>
     :root{color-scheme:light;font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f1e9;color:#2b211c}
@@ -715,7 +715,7 @@ export function externalMcpAuthorizationPage(input: {
 </head>
 <body>
   <main>
-    <div class="brand"><span class="brand-icon"><img src="/image/logo-small.webp" alt="" /></span><span>神笔马良</span></div>
+    <div class="brand"><span class="brand-icon"><img src="/image/logo-small.webp" alt="" /></span><span>灵图AI</span></div>
     <h1>允许 <span class="client">${escapeHtml(clientName)}</span> 连接？</h1>
     <p class="lead">连接后，该智能体会通过你的马良账号使用以下功能。你的密码和登录凭据不会提供给智能体。</p>
     <ul>${permissionRows}</ul>
@@ -729,7 +729,7 @@ export function externalMcpAuthorizationPage(input: {
       </div>
       <p class="submit-status" data-oauth-submit-status role="status" aria-live="polite" hidden>正在处理，请勿重复点击、刷新或返回…</p>
     </form>
-    <p class="notice">授权后可前往神笔马良「设置 &gt; 插件」随时断开或移除。请只连接你信任的智能体。</p>
+    <p class="notice">授权后可前往灵图AI「设置 &gt; 插件」随时断开或移除。请只连接你信任的智能体。</p>
   </main>
   <script nonce="${escapeHtml(scriptNonce)}">
     (() => {
@@ -783,7 +783,7 @@ export function externalMcpAuthorizationSuccessPage(input: {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>正在完成授权 - 神笔马良</title>
+  <title>正在完成授权 - 灵图AI</title>
   <link rel="icon" type="image/webp" href="/image/logo-small.webp" />
   <style>
     :root{color-scheme:light;font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;background:#f5f1e9;color:#2b211c}
@@ -796,10 +796,10 @@ export function externalMcpAuthorizationSuccessPage(input: {
 </head>
 <body>
   <main data-success-card data-callback-url="${escapeHtml(callbackUrl)}" data-status-url="${escapeHtml(statusUrl)}">
-    <div class="brand"><span class="brand-icon"><img src="/image/logo-small.webp" alt="" /><span class="brand-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-8" /></svg></span></span><span>神笔马良</span></div>
+    <div class="brand"><span class="brand-icon"><img src="/image/logo-small.webp" alt="" /><span class="brand-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-8" /></svg></span></span><span>灵图AI</span></div>
     <h1 class="title" data-success-title>正在完成授权</h1>
     <p class="message" data-success-message>正在将授权结果返回智能体，请稍候…</p>
-    <a class="action" href="/" data-success-action hidden>返回神笔马良</a>
+    <a class="action" href="/" data-success-action hidden>返回灵图AI</a>
   </main>
   <script nonce="${escapeHtml(scriptNonce)}">
     (() => {
@@ -815,16 +815,16 @@ export function externalMcpAuthorizationSuccessPage(input: {
         if (settled) return;
         settled = true;
         card.classList.add("is-complete");
-        document.title = "授权成功 - 神笔马良";
+        document.title = "授权成功 - 灵图AI";
         if (title) title.textContent = "授权成功";
-        if (message) message.textContent = "授权已完成，你可以返回神笔马良继续使用。";
+        if (message) message.textContent = "授权已完成，你可以返回灵图AI继续使用。";
         if (action instanceof HTMLElement) action.hidden = false;
       };
       const failed = (detail = "请返回智能体重新发起授权。") => {
         if (settled) return;
         settled = true;
         card.classList.add("is-failed");
-        document.title = "授权未完成 - 神笔马良";
+        document.title = "授权未完成 - 灵图AI";
         if (title) title.textContent = "授权未完成";
         if (message) message.textContent = detail;
         if (action instanceof HTMLElement) action.hidden = false;
@@ -899,7 +899,7 @@ export function externalMcpAuthorizationSuccessPageCsp(scriptNonce: string, redi
 }
 
 export function externalMcpAuthorizationErrorPage(message: string) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>授权失败 - 神笔马良</title><link rel="icon" type="image/webp" href="/image/logo-small.webp"><style>*{box-sizing:border-box}body{font-family:Inter,system-ui,"Microsoft YaHei";background:#f5f1e9;color:#2b211c;min-height:100vh;display:grid;place-items:center;margin:0;padding:24px}.card{width:min(520px,100%);background:#fffdf8;border:1px solid #eadfd4;border-radius:20px;padding:30px;box-shadow:0 20px 60px #4a2f1f1c}.brand{display:flex;align-items:center;gap:10px;color:#7a3c27;font-weight:800}.brand-icon{width:42px;height:42px;display:grid;place-items:center;border:1px solid #ead8c6;border-radius:13px;background:#fff8ed}.brand-icon img{display:block;width:38px;height:38px;object-fit:contain}h1{margin:24px 0 8px;font-size:26px}p{margin:0;color:#6f6259;line-height:1.7}a{display:inline-flex;margin-top:22px;border-radius:999px;background:#f0ebe5;color:#5b5049;padding:10px 16px;font-size:14px;font-weight:700;text-decoration:none}</style></head><body><main class="card"><div class="brand"><span class="brand-icon"><img src="/image/logo-small.webp" alt=""></span><span>神笔马良</span></div><h1>暂时无法授权</h1><p>${escapeHtml(message)}</p><a href="/mcp">返回安装说明</a></main></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>授权失败 - 灵图AI</title><link rel="icon" type="image/webp" href="/image/logo-small.webp"><style>*{box-sizing:border-box}body{font-family:Inter,system-ui,"Microsoft YaHei";background:#f5f1e9;color:#2b211c;min-height:100vh;display:grid;place-items:center;margin:0;padding:24px}.card{width:min(520px,100%);background:#fffdf8;border:1px solid #eadfd4;border-radius:20px;padding:30px;box-shadow:0 20px 60px #4a2f1f1c}.brand{display:flex;align-items:center;gap:10px;color:#7a3c27;font-weight:800}.brand-icon{width:42px;height:42px;display:grid;place-items:center;border:1px solid #ead8c6;border-radius:13px;background:#fff8ed}.brand-icon img{display:block;width:38px;height:38px;object-fit:contain}h1{margin:24px 0 8px;font-size:26px}p{margin:0;color:#6f6259;line-height:1.7}a{display:inline-flex;margin-top:22px;border-radius:999px;background:#f0ebe5;color:#5b5049;padding:10px 16px;font-size:14px;font-weight:700;text-decoration:none}</style></head><body><main class="card"><div class="brand"><span class="brand-icon"><img src="/image/logo-small.webp" alt=""></span><span>灵图AI</span></div><h1>暂时无法授权</h1><p>${escapeHtml(message)}</p><a href="/mcp">返回安装说明</a></main></body></html>`;
 }
 
 function issueTokens(input: {

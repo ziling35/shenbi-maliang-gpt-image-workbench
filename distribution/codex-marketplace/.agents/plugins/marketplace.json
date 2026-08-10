@@ -1,7 +1,7 @@
 {
   "name": "maliang-internal",
   "interface": {
-    "displayName": "神笔马良内部插件"
+    "displayName": "灵图AI内部插件"
   },
   "plugins": [
     {

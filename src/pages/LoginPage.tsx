@@ -93,9 +93,9 @@ export function LoginPage({
   const loginSceneTransitionIdRef = useRef(0);
   const titleLeaveTimeoutRef = useRef<number | null>(null);
   const titleEnterTimeoutRef = useRef<number | null>(null);
-  const registrationStatus = useQuery({ queryKey: ["registration-status"], queryFn: api.registrationStatus });
+  const registrationStatus = useQuery({ queryKey: ["registration-status"], queryFn: api.registrationStatus, staleTime: 5 * 60 * 1000 });
   const branding = useQuery({ queryKey: ["branding"], queryFn: api.branding });
-  const registrationEnabled = registrationStatus.data?.enabled === true;
+  const registrationEnabled = registrationStatus.data?.enabled !== false;
   const emailVerificationRequired = registrationStatus.data?.emailVerificationRequired !== false;
   const login = useMutation({
     mutationFn: () => api.login(account, password),

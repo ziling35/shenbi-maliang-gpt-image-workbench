@@ -1103,6 +1103,48 @@ function emptyProxy(): ProxyConfig {
   };
 }
 
+export function ObjectStorageSettingsPanel() {
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+  const query = useQuery({ queryKey: ["config-object-storage"], queryFn: configApi.objectStorage });
+  const [form, setForm] = useState({ enabled: false, secretId: "", secretKey: "", bucket: "", region: "", basePath: "gpt-image-workbench", publicBaseUrl: "" });
+  const save = useMutation({
+    mutationFn: () => configApi.saveObjectStorage(form),
+    onSuccess: (data) => { setForm({ ...data.settings, secretKey: data.settings.secretKey }); queryClient.setQueryData(["config-object-storage"], data); showToast("对象存储配置已保存"); },
+    onError: (error) => showToast(error instanceof Error ? error.message : "对象存储配置保存失败", "error")
+  });
+  const test = useMutation({
+    mutationFn: configApi.testObjectStorage,
+    onSuccess: () => showToast("腾讯云 COS 连接成功"),
+    onError: (error) => showToast(error instanceof Error ? error.message : "腾讯云 COS 连接失败", "error")
+  });
+  const migrate = useMutation({
+    mutationFn: configApi.migrateObjectStorage,
+    onSuccess: (data) => showToast(`历史图片迁移完成：${data.migrated}/${data.total}`),
+    onError: (error) => showToast(error instanceof Error ? error.message : "历史图片迁移失败", "error")
+  });
+  useEffect(() => {
+    if (!query.data?.settings) return;
+    setForm({ ...query.data.settings, secretKey: query.data.settings.secretKey });
+  }, [query.data?.settings]);
+  return (
+    <section className="config-card">
+      <ConfigHeader title="对象存储" desc="将图片原图、预览图和缩略图存储到腾讯云 COS，并通过临时签名地址直连读取。未启用时继续使用本地存储。" />
+      <div className="config-form-grid">
+        <label className="config-switch-row"><span>启用腾讯云 COS</span><input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /></label>
+        <label>SecretId<input value={form.secretId} onChange={(event) => setForm({ ...form, secretId: event.target.value })} autoComplete="off" /></label>
+        <label>SecretKey<input type="password" value={form.secretKey} onChange={(event) => setForm({ ...form, secretKey: event.target.value })} autoComplete="new-password" placeholder="留空表示保持原密钥" /></label>
+        <label>Bucket<input value={form.bucket} onChange={(event) => setForm({ ...form, bucket: event.target.value })} placeholder="例如 image-1234567890" /></label>
+        <label>地域<input value={form.region} onChange={(event) => setForm({ ...form, region: event.target.value })} placeholder="例如 ap-guangzhou" /></label>
+        <label>目录前缀<input value={form.basePath} onChange={(event) => setForm({ ...form, basePath: event.target.value })} /></label>
+        <label>自定义访问域名（可选）<input value={form.publicBaseUrl} onChange={(event) => setForm({ ...form, publicBaseUrl: event.target.value })} placeholder="https://cdn.example.com" /></label>
+      </div>
+      <div className="config-actions"><button className="primary-btn" type="button" disabled={save.isPending || query.isLoading} onClick={() => save.mutate()}><Save size={15} />保存配置</button><button className="secondary-btn" type="button" disabled={test.isPending || !form.enabled} onClick={() => test.mutate()}><Check size={15} />测试连接</button><button className="secondary-btn" type="button" disabled={migrate.isPending || !form.enabled} onClick={() => migrate.mutate()}><Upload size={15} />迁移历史图片</button></div>
+      <p className="config-muted-text">安全建议：SecretId 使用最小权限子账号，仅授予指定 Bucket 的对象读写和删除权限；公开域名建议配置腾讯云 CDN 或自定义域名。</p>
+    </section>
+  );
+}
+
 export function ProxyPanel() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
