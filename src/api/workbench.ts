@@ -227,6 +227,18 @@ export type PromptOptimizerModelCatalog = {
   providers: Array<{ providerId: string; providerName: string; models: string[] }>;
 };
 
+export type ComposerSettings = {
+  providerId: string;
+  imageCount: number;
+  size: string;
+  quality: string;
+  promptOptimizerModel: string;
+  promptInputOptimizeStyle: string;
+  promptColorSchemeIds: string[];
+  promptColorSchemeInjection: string;
+  updatedAt?: string;
+};
+
 export type GuestImageProvider = {
   id: string;
   name: string;
@@ -755,6 +767,13 @@ export const api = {
     ),
   session: (sessionId: string, init?: RequestInit) =>
     request<{ session: ChatSession }>(`/api/sessions/${encodeURIComponent(sessionId)}`, init),
+  composerSettings: (sessionId?: string, init?: RequestInit) =>
+    request<{ settings: ComposerSettings | null }>(`/api/composer-settings${queryString({ sessionId })}`, init),
+  saveComposerSettings: (sessionId: string | undefined, settings: ComposerSettings) =>
+    request<{ settings: ComposerSettings }>("/api/composer-settings", {
+      method: "PUT",
+      body: JSON.stringify({ sessionId, settings })
+    }),
   createSession: (payload?: { prompt?: string; title?: string; clientRequestId?: string }, init?: RequestInit) =>
     request<{ session: ChatSession }>("/api/sessions", {
       ...init,

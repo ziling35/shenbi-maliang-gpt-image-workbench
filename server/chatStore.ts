@@ -544,8 +544,11 @@ export async function deleteSessionRecords(userId: string, sessionId: string) {
   );
   run(appDb, "delete from image_jobs where user_id = ? and session_id = ?", userId, sessionId);
   run(appDb, "delete from messages where user_id = ? and session_id = ?", userId, sessionId);
+  run(appDb, "delete from composer_settings where user_id = ? and session_id = ?", userId, sessionId);
   const result = run(appDb, "delete from sessions where user_id = ? and id = ? and deleted_at is null", userId, sessionId);
-  return Number(result.changes ?? 0) > 0;
+  const deleted = Number(result.changes ?? 0) > 0;
+  if (deleted) run(appDb, "delete from composer_settings where user_id = ? and session_id = ?", userId, sessionId);
+  return deleted;
 }
 
 export function deleteRequestEmptySessionRecord(userId: string, sessionId: string, clientRequestId: string) {
@@ -625,7 +628,9 @@ export function deleteCancelledEmptySessionRecord(userId: string, sessionId: str
       userId,
       userId
     );
-    return Number(result.changes ?? 0) > 0;
+    const deleted = Number(result.changes ?? 0) > 0;
+    if (deleted) run(appDb, "delete from composer_settings where user_id = ? and session_id = ?", userId, sessionId);
+    return deleted;
   });
 
   return deleteRecord();
@@ -646,6 +651,7 @@ export async function deleteAllSessionRecords(userId: string) {
   );
   run(appDb, "delete from image_jobs where user_id = ? and session_id in (select id from sessions where user_id = ?)", userId, userId);
   run(appDb, "delete from messages where user_id = ? and session_id in (select id from sessions where user_id = ?)", userId, userId);
+  run(appDb, "delete from composer_settings where user_id = ? and session_id <> ''", userId);
   const result = run(appDb, "delete from sessions where user_id = ?", userId);
   return Number(result.changes ?? 0);
 }

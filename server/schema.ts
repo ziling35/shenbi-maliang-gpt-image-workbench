@@ -852,6 +852,29 @@ export function initAppDb() {
   appDb.run("create index if not exists sessions_user_active_pin_asc_time_idx on sessions(user_id, deleted_at, archived_at, pinned_at asc, updated_at desc)");
 
   appDb.run(`
+    create table if not exists composer_settings (
+      user_id text not null,
+      session_id text not null default '',
+      provider_id text not null default '',
+      image_count integer not null default 1,
+      size text not null default '',
+      quality text not null default '',
+      prompt_optimizer_model text not null default 'system',
+      prompt_input_optimize_style text not null default 'standard',
+      prompt_color_scheme_ids_json text not null default '[]',
+      prompt_color_scheme_injection text not null default '',
+      created_at text not null,
+      updated_at text not null,
+      primary key (user_id, session_id),
+      foreign key (user_id) references users(id)
+    )
+  `);
+  if (!tableColumnExists(appDb, "composer_settings", "prompt_optimizer_model")) {
+    appDb.run("alter table composer_settings add column prompt_optimizer_model text not null default 'system'");
+  }
+  appDb.run("create index if not exists composer_settings_user_updated_idx on composer_settings(user_id, updated_at desc)");
+
+  appDb.run(`
     create table if not exists messages (
       id text primary key,
       session_id text not null,

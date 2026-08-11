@@ -78,6 +78,7 @@ import { registerAssetRoutes } from "./assetRoutes";
 import { registerBackupRoutes, startBackupScheduler } from "./backupRoutes";
 import { invalidatePublicBrandingCache, registerBrandingRoutes } from "./branding";
 import { registerCaseRoutes } from "./caseRoutes";
+import { registerComposerSettingsRoutes } from "./composerSettingsRoutes";
 import { registerChangelogRoutes } from "./changelogRoutes";
 import { registerFileRoutes } from "./fileRoutes";
 import { registerExternalMcpOAuthRoutes } from "./externalMcpOAuth";
@@ -318,6 +319,7 @@ registerFileRoutes(api);
 registerLibraryRoutes(api);
 
 registerCaseRoutes(api);
+registerComposerSettingsRoutes(api);
 
 registerPromptReferenceLinkRoutes(api);
 registerPromptColorSchemeRoutes(api);

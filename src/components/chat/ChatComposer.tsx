@@ -62,6 +62,7 @@ type ChatComposerProps = {
   imageModelValue: string;
   estimatedCostLabel?: string;
   promptOptimizerModels?: PromptOptimizerModelCatalog;
+  promptOptimizerModelValue: string;
   promptColorSchemes: PromptColorScheme[];
   promptColorSchemeIds: string[];
   promptColorSchemeInjection?: string;
@@ -94,6 +95,7 @@ type ChatComposerProps = {
   onPromptColorSchemeChange?: (state: { ids: string[]; injection: string; prompt: string }) => void;
   onPromptInputOptimizeStyleChange?: (value: PromptTemplateOptimizeStyle) => void;
   onPromptOptimizeCustomInstructionChange?: (value: string) => void;
+  onPromptOptimizerModelChange: (value: string) => void;
   onPromptTemplateDraftChange?: (draft: ComposerPromptTemplateDraft | null) => void;
   draftCaseUsage?: { caseItemId: string; prompt: string } | null;
 };
@@ -156,6 +158,7 @@ export function ChatComposer({
   imageModelValue,
   estimatedCostLabel,
   promptOptimizerModels,
+  promptOptimizerModelValue,
   promptColorSchemes,
   promptColorSchemeIds,
   promptColorSchemeInjection = "",
@@ -188,6 +191,7 @@ export function ChatComposer({
   onPromptColorSchemeChange,
   onPromptInputOptimizeStyleChange,
   onPromptOptimizeCustomInstructionChange,
+  onPromptOptimizerModelChange,
   onPromptTemplateDraftChange,
   draftCaseUsage
 }: ChatComposerProps) {
@@ -204,7 +208,6 @@ export function ChatComposer({
   const [promptTemplateActionSlot, setPromptTemplateActionSlot] = useState<HTMLSpanElement | null>(null);
   const [promptTemplateOptimizeControlVisible, setPromptTemplateOptimizeControlVisible] = useState(false);
   const [promptInputOptimizePending, setPromptInputOptimizePending] = useState(false);
-  const [promptOptimizerModelValue, setPromptOptimizerModelValue] = useState(() => window.localStorage.getItem("gpt-image.prompt-optimizer-model") ?? "system");
   const [promptInputOptimizeStreaming, setPromptInputOptimizeStreaming] = useState(false);
   const [promptInputCustomInstruction, setPromptInputCustomInstruction] = useState(promptOptimizeCustomInstruction);
   const [promptBeforeInputOptimize, setPromptBeforeInputOptimize] = useState("");
@@ -230,10 +233,10 @@ export function ChatComposer({
     ...(promptOptimizerModels?.providers.flatMap((provider) => provider.models.map((model) => ({ value: `${provider.providerId}\u0000${model}`, label: model, description: provider.providerName, group: provider.providerName }))) ?? [])
   ], [promptOptimizerModels]);
   useEffect(() => {
+    if (!promptOptimizerModels) return;
     if (promptOptimizerModelOptions.some((option) => option.value === promptOptimizerModelValue)) return;
-    setPromptOptimizerModelValue("system");
-    window.localStorage.setItem("gpt-image.prompt-optimizer-model", "system");
-  }, [promptOptimizerModelOptions, promptOptimizerModelValue]);
+    onPromptOptimizerModelChange("system");
+  }, [onPromptOptimizerModelChange, promptOptimizerModelOptions, promptOptimizerModelValue, promptOptimizerModels]);
   const promptTextareaLoading = (promptTemplateLoading && !promptTemplateStreaming) || (promptInputOptimizePending && !promptInputOptimizeStreaming);
   const optimizeStyleOption = promptOptimizeStyleOption(promptInputOptimizeStyle, promptOptimizeStyleGroups);
   const normalizedPromptColorSchemeIds = normalizePromptColorSchemeIds(promptColorSchemeIds, promptColorSchemes).slice(0, 1);
@@ -988,7 +991,7 @@ export function ChatComposer({
                       menuWidth={260}
                     />
                   </span>
-                  <ModelPicker value={promptOptimizerModelValue} options={promptOptimizerModelOptions} onChange={(value) => { setPromptOptimizerModelValue(value); window.localStorage.setItem("gpt-image.prompt-optimizer-model", value); }} kind="prompt" disabled={promptInputOptimizePending} />
+                  <ModelPicker value={promptOptimizerModelValue} options={promptOptimizerModelOptions} onChange={onPromptOptimizerModelChange} kind="prompt" disabled={promptInputOptimizePending} />
                 </div>
                 <button
                   type="button"

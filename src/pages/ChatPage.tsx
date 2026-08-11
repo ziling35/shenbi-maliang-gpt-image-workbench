@@ -524,6 +524,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   const pendingSubmitScope = pendingChatSubmit?.scope ?? null;
   const [submittingScopes, setSubmittingScopes] = useState<string[]>([]);
   const [imageCount, setImageCount] = useState(1);
+  const [promptOptimizerModelValue, setPromptOptimizerModelValue] = useState(() => window.localStorage.getItem("gpt-image.prompt-optimizer-model") ?? "system");
   const [assetTarget, setAssetTarget] = useState<AssetModalTarget | null>(null);
   const [casePickerOpen, setCasePickerOpen] = useState(false);
   const [chatIntroOpen, setChatIntroOpen] = useState(false);
@@ -540,6 +541,11 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   currentSessionIdRef.current = sessionId;
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const promptOptimizeCustomInstructionSaveTimerRef = useRef<number | null>(null);
+  const composerSettingsSaveTimerRef = useRef<number | null>(null);
+  const pendingComposerSettingsSaveRef = useRef<{
+    sessionId?: string;
+    settings: Parameters<typeof api.saveComposerSettings>[1];
+  } | null>(null);
   const pendingSubmitScopeRef = useRef<string | null>(pendingSubmitScope);
   const starterPromptOptimizeRequestIdRef = useRef(0);
   const submitSessionByRequestRef = useRef(new Map<string, string>());
@@ -586,6 +592,20 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
 
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providers });
   const promptOptimizerModels = useQuery({ queryKey: ["prompt-optimizer-models", "prompt.optimize"], queryFn: () => api.promptOptimizerModels("prompt.optimize") });
+  const composerSettings = useQuery({
+    queryKey: ["composer-settings", user.id, sessionId ?? "new"],
+    queryFn: () => api.composerSettings(sessionId ?? undefined),
+    enabled: Boolean(user.id),
+    staleTime: 0
+  });
+  const handlePromptOptimizerModelChange = useCallback((value: string) => {
+    setPromptOptimizerModelValue(value);
+    window.localStorage.setItem("gpt-image.prompt-optimizer-model", value);
+  }, []);
+  const { mutate: persistComposerSettings } = useMutation({
+    mutationFn: (payload: { sessionId?: string; settings: Parameters<typeof api.saveComposerSettings>[1] }) =>
+      api.saveComposerSettings(payload.sessionId, payload.settings)
+  });
   const billingAccount = useQuery({ queryKey: ["billing-account"], queryFn: api.billingAccount });
   const branding = useQuery({ queryKey: ["branding"], queryFn: api.branding });
   const aiClientInstallEnabled = branding.data?.showAiClientInstallEntry ?? true;
@@ -837,6 +857,16 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       return { sessionId: request.sessionId, created: false };
     }
     const result = await api.createSession({ prompt: request.prompt, clientRequestId: request.clientRequestId });
+    await api.saveComposerSettings(result.session.id, {
+      providerId: request.providerId ?? providerId,
+      imageCount: request.n ?? imageCount,
+      size: request.size ?? size,
+      quality: request.quality ?? quality,
+      promptOptimizerModel: promptOptimizerModelValue,
+      promptInputOptimizeStyle: currentPromptInputOptimizeStyle,
+      promptColorSchemeIds: currentPromptColorSchemeIds,
+      promptColorSchemeInjection: currentPromptColorSchemeInjection
+    }).catch((error) => console.warn("新对话参数保存失败，将在进入对话后重试", error));
     submitSessionByRequestRef.current.set(request.clientRequestId, result.session.id);
     replaceSubmittingScope(request.pendingScope, result.session.id);
     if (pendingSubmitScopeRef.current === request.pendingScope) setPendingScope(result.session.id);
@@ -1730,6 +1760,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   }, [closePagedImageEditor, editorImageRequest?.persistAcrossSessionChange, imageEditor, sessionId]);
   useEffect(() => {
     const storedDraft = useWorkbench.getState().composerDrafts[composerScopeKey];
+    const savedSettings = composerSettings.data?.settings;
     const draftSelectedAssets = persistableAssets(selectedAssets);
     const handoffDraftFields = {
       draftPrompt,
@@ -1749,9 +1780,21 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       && !hasRestoredComposerScopeRef.current
       && !sessionId
       && hasComposerDraftContent(handoffDraftFields);
-    const nextDraft = storedDraft ?? (shouldUseHandoffDraft
-      ? { ...emptyComposerSessionDraft(), ...handoffDraftFields }
-      : emptyComposerSessionDraft());
+    const nextDraft = {
+      ...(storedDraft ?? (shouldUseHandoffDraft
+        ? { ...emptyComposerSessionDraft(), ...handoffDraftFields }
+        : emptyComposerSessionDraft())),
+      ...(savedSettings ? {
+        providerId: savedSettings.providerId,
+        imageCount: savedSettings.imageCount,
+        size: savedSettings.size,
+        quality: savedSettings.quality,
+        promptInputOptimizeStyle: normalizePromptOptimizeStyle(savedSettings.promptInputOptimizeStyle, promptOptimizeStyleGroups),
+        promptColorSchemeIds: savedSettings.promptColorSchemeIds,
+        promptColorSchemeId: savedSettings.promptColorSchemeIds[0] ?? "",
+        promptColorSchemeInjection: savedSettings.promptColorSchemeInjection
+      } : {})
+    };
 
     if (shouldUseHandoffDraft) upsertComposerDraft(composerScopeKey, handoffDraftFields);
     hasRestoredComposerScopeRef.current = true;
@@ -1764,6 +1807,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     setImageCount(nextDraft.imageCount);
     setSize(nextDraft.size);
     setQuality(nextDraft.quality);
+    handlePromptOptimizerModelChange(savedSettings?.promptOptimizerModel || window.localStorage.getItem("gpt-image.prompt-optimizer-model") || "system");
     setMaterialPickerOpen(false);
     setCasePickerOpen(false);
     setError("");
@@ -1778,12 +1822,12 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       }
     }, 0);
     return () => window.clearTimeout(restoreTimer);
-  }, [composerInstanceKey]);
+  }, [composerInstanceKey, composerSettings.dataUpdatedAt, promptOptimizeStyleGroups]);
 
   useEffect(() => {
     if (imageEditor || editorImageRequest?.discardDraftOnClose) return;
     if (restoringComposerDraftScopeRef.current === composerScopeKey) return;
-    upsertComposerDraft(composerScopeKey, {
+    const draft = {
       draftPrompt,
       draftCaseUsage,
       selectedCaseMaterials,
@@ -1796,9 +1840,32 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       promptColorSchemeIds: currentPromptColorSchemeIds,
       promptColorSchemeId: currentPromptColorSchemeIds[0] ?? "",
       promptColorSchemeInjection: currentPromptColorSchemeInjection
-    });
+    };
+    upsertComposerDraft(composerScopeKey, draft);
+    if (!composerSettings.isFetched) return;
+    if (composerSettingsSaveTimerRef.current) window.clearTimeout(composerSettingsSaveTimerRef.current);
+    pendingComposerSettingsSaveRef.current = {
+      sessionId: sessionId ?? undefined,
+      settings: {
+        providerId,
+        imageCount,
+        size,
+        quality,
+        promptOptimizerModel: promptOptimizerModelValue,
+        promptInputOptimizeStyle: currentPromptInputOptimizeStyle,
+        promptColorSchemeIds: currentPromptColorSchemeIds,
+        promptColorSchemeInjection: currentPromptColorSchemeInjection
+      }
+    };
+    composerSettingsSaveTimerRef.current = window.setTimeout(() => {
+      composerSettingsSaveTimerRef.current = null;
+      const pending = pendingComposerSettingsSaveRef.current;
+      pendingComposerSettingsSaveRef.current = null;
+      if (pending) persistComposerSettings(pending);
+    }, 450);
   }, [
     composerScopeKey,
+    composerSettings.isFetched,
     currentPromptColorSchemeIdsKey,
     currentPromptColorSchemeInjection,
     currentPromptInputOptimizeStyle,
@@ -1808,12 +1875,25 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     imageEditor,
     imageCount,
     providerId,
+    promptOptimizerModelValue,
     quality,
     selectedAssets,
     selectedCaseMaterials,
     size,
+    persistComposerSettings,
+    sessionId,
     upsertComposerDraft
   ]);
+
+  useEffect(() => () => {
+    if (composerSettingsSaveTimerRef.current) {
+      window.clearTimeout(composerSettingsSaveTimerRef.current);
+      composerSettingsSaveTimerRef.current = null;
+    }
+    const pending = pendingComposerSettingsSaveRef.current;
+    pendingComposerSettingsSaveRef.current = null;
+    if (pending) void api.saveComposerSettings(pending.sessionId, pending.settings).catch(() => undefined);
+  }, [composerScopeKey]);
 
   useEffect(() => {
     if (sessionId || !newChatPromptOptimizeRequest) return;
@@ -2414,6 +2494,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         imageModelValue={providerId}
         estimatedCostLabel={estimatedCostLabel}
         promptOptimizerModels={promptOptimizerModels.data}
+        promptOptimizerModelValue={promptOptimizerModelValue}
         promptColorSchemes={promptColorSchemeList}
         promptColorSchemeIds={currentPromptColorSchemeIds}
         promptColorSchemeInjection={currentPromptColorSchemeInjection}
@@ -2448,6 +2529,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         onPromptColorSchemeChange={handlePromptColorSchemeChange}
         onPromptInputOptimizeStyleChange={handlePromptInputOptimizeStyleChange}
         onPromptOptimizeCustomInstructionChange={schedulePromptOptimizeCustomInstructionSave}
+        onPromptOptimizerModelChange={handlePromptOptimizerModelChange}
         onPromptTemplateDraftChange={handlePromptTemplateDraftChange}
         onToggleMaterialPicker={() => setMaterialPickerOpen(!materialPickerOpen)}
       />

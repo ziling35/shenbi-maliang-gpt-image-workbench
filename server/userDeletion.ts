@@ -134,6 +134,7 @@ export async function deleteUserAccount(userId: string) {
     run(appDb, "delete from assets where user_id = ?", userId);
     run(appDb, "delete from messages where user_id = ?", userId);
     run(appDb, "delete from image_jobs where user_id = ?", userId);
+    run(appDb, "delete from composer_settings where user_id = ?", userId);
     run(appDb, "delete from sessions where user_id = ?", userId);
     run(appDb, "delete from search_history where user_id = ?", userId);
     run(appDb, "delete from prompt_color_schemes where user_id = ?", userId);
