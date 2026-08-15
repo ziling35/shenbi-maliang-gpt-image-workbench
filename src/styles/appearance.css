@@ -995,6 +995,17 @@ html:is([data-appearance="dark"], [data-appearance="maliang"], [data-appearance=
   background: var(--app-hover-bg);
 }
 
+html:is([data-appearance="dark"], [data-appearance="maliang"], [data-appearance="chunyu"]) .custom-size-inputs input {
+  background: rgba(15, 23, 42, 0.72);
+  border-color: rgba(148, 163, 184, 0.24);
+  color: #f8fafc;
+}
+
+html:is([data-appearance="dark"], [data-appearance="maliang"], [data-appearance="chunyu"]) .size-picker-menu .custom-size-actions button.primary {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
 html:is([data-appearance="dark"], [data-appearance="maliang"], [data-appearance="chunyu"]) .composer-result-select-menu button:disabled,
 html:is([data-appearance="dark"], [data-appearance="maliang"], [data-appearance="chunyu"]) .composer-result-select-menu button:disabled small {
   color: var(--app-subtle);

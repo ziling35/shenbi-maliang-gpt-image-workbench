@@ -32,6 +32,7 @@ import { ChangelogPanel, StatisticsPanel } from "./panels/overview";
 import { ImageTaskSoundManagementPanel } from "./panels/sounds";
 import { AuditPanel, BackupPanel, BrandingSettingsPanel, DebugSettingsPanel, ModelRequestLogsPanel, ObjectStorageSettingsPanel, ProxyPanel, RequestLogsPanel, SmsSettingsPanel, SmtpSettingsPanel } from "./panels/system";
 import { BillingSettingsPanel } from "./panels/billing";
+import { VideoProvidersPanel } from "./panels/video";
 
 function configNavLabelKey(value: ConfigTabValue) {
   return `config.nav.${value}`;
@@ -174,6 +175,9 @@ export function ConfigDashboard() {
         </Tabs.Content>
         <Tabs.Content value="providers">
           <ProvidersPanel />
+        </Tabs.Content>
+        <Tabs.Content value="videoProviders">
+          <VideoProvidersPanel />
         </Tabs.Content>
         <Tabs.Content value="promptOptimizer">
           <PromptOptimizerPanel />

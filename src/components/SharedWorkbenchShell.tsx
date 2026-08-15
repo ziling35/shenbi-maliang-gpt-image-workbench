@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, FolderOpen, ImagePlus, Images, Lightbulb, Menu, MessageCircle, MessageCirclePlus, PanelLeft, Search, Sparkles, WandSparkles, X } from "lucide-react";
+import { ArrowUp, Film, FolderOpen, ImagePlus, Images, Lightbulb, Menu, MessageCircle, MessageCirclePlus, PanelLeft, Search, Sparkles, WandSparkles, X } from "lucide-react";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useI18n } from "../i18n";
@@ -18,6 +18,7 @@ const guestNavigation = [
   { path: "/cases", labelKey: "sidebar.inspiration", icon: Lightbulb },
   { path: "/assets", labelKey: "sidebar.assets", icon: FolderOpen },
   { path: "/images", labelKey: "sidebar.images", icon: Images },
+  { path: "/videos", labelKey: "sidebar.videos", icon: Film },
   { path: "/prompt-templates", labelKey: "sidebar.promptCreation", icon: Sparkles }
 ] as const;
 
@@ -67,7 +68,12 @@ function GuestWorkbenchPage({ onLogin }: { onLogin: () => void }) {
     if (!currentProvider) return;
     if (imageModelId !== currentProvider.id) setImageModelId(currentProvider.id);
     setSize((value) => (value && sizeOptions.some((option) => option.value === value) ? value : ""));
-    setQuality((value) => (value && qualityOptions.some((option) => option.value === value) ? value : ""));
+    setQuality((value) => {
+      if (value && qualityOptions.some((option) => option.value === value)) return value;
+      return currentProvider.defaultQuality && qualityOptions.some((option) => option.value === currentProvider.defaultQuality)
+        ? currentProvider.defaultQuality
+        : qualityOptions[0]?.value ?? "";
+    });
   }, [currentProvider, imageModelId, qualityOptions, sizeOptions]);
 
   useEffect(() => {
@@ -89,6 +95,23 @@ function GuestWorkbenchPage({ onLogin }: { onLogin: () => void }) {
     saveDraft();
     onLogin();
   };
+
+  useEffect(() => {
+    const handleLiveAction = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string; prompt?: string; providerId?: string; size?: string; quality?: string; imageCount?: number }>).detail;
+      if (!detail || !["set_prompt", "demo_generate", "inspect_state"].includes(String(detail.type))) return;
+      if (detail.prompt) setDraftPrompt(detail.prompt);
+      if (detail.providerId) setImageModelId(detail.providerId);
+      if (detail.size) setSize(detail.size);
+      if (detail.quality) setQuality(detail.quality);
+      if (Number.isFinite(detail.imageCount)) setImageCount(Math.max(1, Math.min(4, Number(detail.imageCount))));
+      window.parent.postMessage({ source: "lingtu-live-demo", type: "action_applied", action: detail.type, prompt: detail.prompt || "", guest: true }, "*");
+      if (detail.type === "demo_generate") window.setTimeout(requestLoginForGeneration, 250);
+      if (detail.type === "inspect_state") window.parent.postMessage({ source: "lingtu-live-demo", type: "platform_state", loggedIn: false, busy: false, page: window.location.pathname, at: Date.now() }, "*");
+    };
+    window.addEventListener("lingtu-live-action", handleLiveAction);
+    return () => window.removeEventListener("lingtu-live-action", handleLiveAction);
+  }, [draftPrompt, imageCount, onLogin, promptOptimizeStyle, quality, size, upsertComposerDraft]);
 
   return (
     <section className="guest-workbench-page">

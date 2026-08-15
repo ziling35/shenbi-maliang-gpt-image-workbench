@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { buildQualityOptions, buildSizeOptions } from "../lib/imageOptions";
+import { buildQualityOptions, buildSizeOptions, customImageDimensions } from "../lib/imageOptions";
 import type { ProviderConfig } from "../types";
 
 export function useImageProviderSelection(providerOptions: ProviderConfig[]) {
@@ -15,8 +15,14 @@ export function useImageProviderSelection(providerOptions: ProviderConfig[]) {
   useEffect(() => {
     if (!currentProvider) return;
     if (providerId !== currentProvider.id) setProviderId(currentProvider.id);
-    setSize((value) => (!value || sizeOptions.some((item) => item.value === value) ? value : ""));
-    setQuality((value) => (!value || qualityOptions.some((item) => item.value === value) ? value : ""));
+    setSize((value) => (!value || customImageDimensions(value) || sizeOptions.some((item) => item.value === value) ? value : ""));
+    setQuality((value) => {
+      if (value && qualityOptions.some((item) => item.value === value)) return value;
+      const preferred = currentProvider.defaultQuality && qualityOptions.some((item) => item.value === currentProvider.defaultQuality)
+        ? currentProvider.defaultQuality
+        : qualityOptions[0]?.value ?? "";
+      return preferred;
+    });
   }, [currentProvider, providerId, qualityOptions, sizeOptions]);
 
   return {

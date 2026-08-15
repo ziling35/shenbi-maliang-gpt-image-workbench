@@ -2,7 +2,7 @@ import type { LibraryImageCard, Message, WorkImage } from "../types";
 import { imageCreatedTime } from "./imageTimeline";
 
 export function workImageFromMessage(message: Message): WorkImage | null {
-  if (!message.imageUrl || !message.imageId) return null;
+  if (!message.imageUrl || !message.imageId || message.metadata?.pendingImage === true) return null;
   return {
     id: message.imageId,
     url: message.imageUrl,

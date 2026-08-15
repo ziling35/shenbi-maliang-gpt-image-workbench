@@ -34,6 +34,7 @@ import {
   Volume2,
   WandSparkles
   ,WalletCards
+  ,Video
 } from "lucide-react";
 
 export const CONFIG_TAB_STORAGE_KEY = "gpt-image.config.activeTab";
@@ -48,6 +49,7 @@ export const CONFIG_TAB_VALUES = [
   "caseReviews",
   "imageAccounts",
   "providers",
+  "videoProviders",
   "promptOptimizer",
   "safetyReview",
   "smtp",
@@ -85,6 +87,7 @@ export const CONFIG_NAV_ITEMS: ConfigNavItem[] = [
   { value: "caseReviews", label: "灵感审核", Icon: Lightbulb },
   { value: "imageAccounts", label: "账号池", Icon: ShieldCheck },
   { value: "providers", label: "渠道配置", Icon: KeyRound },
+  { value: "videoProviders", label: "视频渠道", Icon: Video },
   { value: "promptOptimizer", label: "模型配置", Icon: WandSparkles },
   { value: "safetyReview", label: "安全审核", Icon: ShieldCheck },
   { value: "smtp", label: "邮件配置", Icon: Mail },
@@ -112,7 +115,7 @@ export const CONFIG_NAV_CATEGORIES: Array<{
   { value: "overview", label: "概览", items: ["statistics"] },
   { value: "members", label: "组织", items: ["users", "teams"] },
   { value: "content", label: "内容", items: ["contentCategories", "soundManagement", "assetReviews", "caseReviews", "starterCopy", "changelog"] },
-  { value: "generation", label: "生成", items: ["imageAccounts", "providers", "promptOptimizer", "safetyReview", "imageMode", "cpa"] },
+  { value: "generation", label: "生成", items: ["imageAccounts", "providers", "videoProviders", "promptOptimizer", "safetyReview", "imageMode", "cpa"] },
   { value: "system", label: "系统", items: ["billing", "branding", "storage", "smtp", "sms", "backup", "proxy", "debug", "modelLogs", "requests", "audit"] }
 ];
 

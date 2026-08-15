@@ -1,0 +1,5 @@
+.chat-line small{display:inline-block;padding:2px 5px;margin-right:5px;border-radius:5px;background:#edf3ea;color:#70836f;font-size:7px}
+.event-gift .avatar{background:#fff0d9;color:#b86f25}
+.event-social .avatar,.event-fansclub .avatar{background:#ffe8eb;color:#c25365}
+.event-like .avatar{background:#f1e9ff;color:#7753aa}
+.event-member .avatar{background:#e3f3ee;color:#43776b}

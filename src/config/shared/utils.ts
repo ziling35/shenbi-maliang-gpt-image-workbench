@@ -167,6 +167,7 @@ export function emptyProvider(channel: ProviderConfig["channel"] = "api", existi
     type: "openai-compatible",
     channel,
     enabled: true,
+    sortOrder: 100,
     baseUrl: "https://api.openai.com",
     apiKeyEnv: "OPENAI_API_KEY",
     apiKeyValue: "",
@@ -175,12 +176,18 @@ export function emptyProvider(channel: ProviderConfig["channel"] = "api", existi
     editPath: "/v1/images/edits",
     responsesPath: "/v1/responses",
     model: "gpt-image-2",
-    responsesModel: "gpt-5.5",
+    responsesModel: "",
     sizes: ["1024x1024", "1536x2048", "1152x2048", "2048x1536", "2048x1152"],
     qualities: ["low", "medium", "high"],
+    resolutionTiers: ["1K", "2K", "4K"],
     defaultSize: "auto",
     defaultQuality: "high",
     responseImagePath: "data[0].b64_json",
+    imageResponseFormat: "auto",
+    protocol: "openai_images",
+    streamEnabled: true,
+    imageFormField: "image",
+    apiKeyHeader: "authorization",
     proxyEnabled: false,
     quotaMode: "codex_first",
     webAccountId: "",
@@ -210,6 +217,10 @@ export function providerWithChannelDefaults(
   if (channel === "chatgpt_web") {
     return {
       ...common,
+      protocol: "openai_images",
+      streamEnabled: false,
+      imageFormField: "image",
+      apiKeyHeader: "authorization",
       type: "chatgpt-web",
       baseUrl: "https://chatgpt.com/backend-api",
       apiKeyEnv: "",
@@ -218,6 +229,7 @@ export function providerWithChannelDefaults(
       editPath: "/f/conversation",
       responsesPath: "/codex/responses",
       model: "gpt-image-2",
+      responsesModel: provider.responsesModel || "gpt-5.5",
       quotaMode: provider.quotaMode || "codex_first",
       webAccountMode: provider.webAccountMode || "priority",
       proxyEnabled: true
@@ -226,6 +238,10 @@ export function providerWithChannelDefaults(
   if (channel === "cpa") {
     return {
       ...common,
+      protocol: "openai_images",
+      streamEnabled: true,
+      imageFormField: "image",
+      apiKeyHeader: "authorization",
       type: "openai-compatible",
       baseUrl: "http://127.0.0.1:8317",
       apiKeyEnv: "GPT_IMAGE_API_KEY",
@@ -233,11 +249,16 @@ export function providerWithChannelDefaults(
       generationPath: "/v1/images/generations",
       editPath: "/v1/images/edits",
       responsesPath: "/v1/responses",
+      responsesModel: provider.responsesModel || "gpt-5.5",
       proxyEnabled: false
     };
   }
   return {
     ...common,
+    protocol: "openai_images",
+    streamEnabled: true,
+    imageFormField: "image",
+    apiKeyHeader: "authorization",
     type: "openai-compatible",
     baseUrl: "https://api.openai.com",
     apiKeyEnv: "OPENAI_API_KEY",

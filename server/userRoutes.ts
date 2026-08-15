@@ -44,6 +44,12 @@ import {
 type VerificationPurpose = "register" | "password_reset";
 type VerificationTargetType = "email" | "phone";
 
+function appSessionCookieOptions(c: Context) {
+  const forwardedProto = String(c.req.header("x-forwarded-proto") || "").split(",")[0].trim().toLowerCase();
+  const secure = forwardedProto === "https" || new URL(c.req.url).protocol === "https:";
+  return { httpOnly: true, sameSite: secure ? "None" as const : "Lax" as const, secure, path: "/", maxAge: SESSION_MAX_AGE };
+}
+
 type VerificationCodeRow = {
   id: string;
   purpose: VerificationPurpose;
@@ -311,12 +317,7 @@ function createUserSession(c: Context, user: UserRow) {
     loginAt,
     user.id
   );
-  setCookie(c, APP_COOKIE, sessionId, {
-    httpOnly: true,
-    sameSite: "Lax",
-    path: "/",
-    maxAge: SESSION_MAX_AGE
-  });
+  setCookie(c, APP_COOKIE, sessionId, appSessionCookieOptions(c));
 }
 
 function requireSelfRegistration(c: Context) {

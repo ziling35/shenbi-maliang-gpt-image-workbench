@@ -1176,6 +1176,25 @@
   gap: 6px;
 }
 
+.composer-preview-status {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 6px;
+  color: #fff;
+  background: rgba(17, 24, 39, 0.78);
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+  backdrop-filter: blur(5px);
+}
+
 .composer-action-row {
   min-width: 0;
   min-height: 36px;
@@ -1299,6 +1318,119 @@
   font-size: 12px;
   line-height: 1.25;
   white-space: nowrap;
+}
+
+.composer-output-size {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.resolution-picker-output {
+  padding: 8px 12px 4px;
+  color: #64748b;
+  font-size: 12px;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.custom-size-section {
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.size-picker-menu .custom-size-toggle {
+  width: 100%;
+}
+
+.custom-size-form {
+  padding: 10px 12px 12px;
+}
+
+.size-picker-menu:has(.custom-size-form) {
+  width: min(320px, calc(100vw - 24px));
+}
+
+.custom-size-title {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 10px;
+}
+
+.custom-size-title strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.custom-size-title small {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.custom-size-inputs {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.custom-size-inputs > span {
+  color: var(--text-secondary);
+  padding-bottom: 9px;
+}
+
+.custom-size-inputs label {
+  color: var(--text-secondary);
+  display: grid;
+  font-size: 11px;
+  gap: 5px;
+}
+
+.custom-size-inputs input {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 9px;
+  color: var(--text-primary);
+  min-width: 0;
+  padding: 8px 9px;
+  width: 100%;
+}
+
+.custom-size-error {
+  color: #dc2626;
+  font-size: 11px;
+  margin-top: 7px;
+}
+
+.custom-size-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.size-picker-menu .custom-size-actions button {
+  align-items: center;
+  border-radius: 8px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  grid-template-columns: none;
+  justify-content: center;
+  min-height: 32px;
+  min-width: 68px;
+  padding: 6px 10px;
+  text-align: center;
+  white-space: nowrap;
+  width: auto;
+}
+
+.size-picker-menu .custom-size-actions button.primary {
+  background: #111827;
+  color: #fff;
+  flex: 1 1 auto;
+  min-width: 124px;
 }
 
 .composer-action-secondary .composer-model-select {

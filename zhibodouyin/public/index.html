@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>灵图AI 幻灯片直播演示</title>
+  <link rel="stylesheet" href="/styles.css?v=20260815-offer-card-v1">
+  <link rel="stylesheet" href="/live-events.css?v=20260812-ai-director">
+</head>
+<body class="fullscreen-live-body">
+  <main class="fullscreen-live-shell">
+    <div class="screenshot-fallback slide-stage" id="screenshotFallback">
+      <div class="screen-slide active"><img src="/demo/live-edit-portrait.png" alt="灵图AI人物改图界面"></div>
+      <div class="screen-slide"><img src="/demo/case-emotion-portrait.png" alt="灵图AI电影感情绪人像案例"></div>
+      <div class="screen-slide"><img src="/demo/case-composition-expand.png" alt="灵图AI构图扩展案例"></div>
+      <div class="screen-slide"><img src="/demo/case-wuxia-restyle.png" alt="灵图AI国风武侠改造案例"></div>
+      <div class="screen-slide"><img src="/demo/case-style-extension.png" alt="灵图AI参考风格延展案例"></div>
+      <div class="screen-slide"><img src="/demo/live-outfit-change.png" alt="灵图AI模特换装界面"></div>
+      <div class="screen-slide"><img src="/demo/live-quality-4k.png" alt="灵图AI高清参数界面"></div>
+      <div class="screen-slide"><img src="/demo/live-product-detail.png" alt="灵图AI商品详情图界面"></div>
+      <div class="screen-slide"><img src="/demo/live-local-edit.png" alt="灵图AI局部编辑界面"></div>
+      <div class="screen-slide"><img src="/demo/live-gallery.png" alt="灵图AI作品管理界面"></div>
+      <div class="screen-slide"><img src="/demo/live-prompt-system.png" alt="灵图AI提示词系统界面"></div>
+    </div>
+    <div class="real-demo-frame slide-stage hidden" id="realDemoStage">
+      <iframe id="platformDemoFrame" title="灵图AI真实网页演示" allow="clipboard-read; clipboard-write"></iframe>
+      <div class="real-demo-loading" id="realDemoLoading"><i></i><b>正在加载真实网页</b><span id="realDemoLoadingText">请稍候，正在连接平台</span></div>
+    </div>
+
+    <div class="live-corner-status">
+      <i></i><div><b id="brandTitle">灵图AI</b><span id="screenCueTitle">产品功能演示</span></div>
+    </div>
+    <div class="live-offer-card" aria-label="灵图AI试用与价格">
+      <div class="offer-trial"><small>当前开放</small><b>免费试用</b><span>关注后领取入口</span></div>
+      <div class="offer-price"><small>高清 2K</small><b>¥0.02</b><span>每张</span></div>
+      <div class="offer-price featured"><small>超清 4K</small><b>¥0.09</b><span>每张</span></div>
+    </div>
+
+    <button class="control-fab" id="controlToggle" type="button" aria-controls="controlDrawer" aria-expanded="false">
+      <span>控</span><b>直播控制</b>
+    </button>
+
+    <aside class="control-drawer" id="controlDrawer" aria-hidden="true">
+      <div class="drawer-head">
+        <div><small>LINGTU LIVE DIRECTOR</small><b id="brandSubtitle">灵图AI 幻灯片演示</b></div>
+        <button id="controlClose" type="button" aria-label="关闭控制面板">×</button>
+      </div>
+
+      <section class="drawer-section">
+        <div class="drawer-section-title"><b>演示功能</b><span id="stageStatus">截图轮播已就绪</span></div>
+        <div class="bridge-status connected" id="bridgeStatus"><i></i><span>本地幻灯片模式</span></div>
+        <div class="scene-grid" id="stageTabs">
+          <button class="active" data-index="0">人物改图</button>
+          <button data-index="1">情绪人像</button>
+          <button data-index="2">扩图构图</button>
+          <button data-index="3">国风武侠</button>
+          <button data-index="4">参考延展</button>
+          <button data-index="5">模特换装</button>
+          <button data-index="6">2K / 4K</button>
+          <button data-index="7">商品详情</button>
+          <button data-index="8">局部涂抹</button>
+          <button data-index="9">我的图片</button>
+          <button data-index="10">提示词助手</button>
+        </div>
+        <div class="feature-list hidden" aria-hidden="true"><article></article><article></article><article></article><article></article><article></article><article></article><article></article></div>
+      </section>
+
+      <section class="drawer-section current-scene">
+        <small id="chapterLabel">01 · 对话改图</small>
+        <b id="headline">一句话调整人物照片</b>
+        <p id="subline">在真实平台中直接上传图片、输入要求并生成。</p>
+        <div class="narration-progress"><i id="narrationProgress"></i></div>
+        <span id="sidebarCurrentScene">人物改图</span><span id="sidebarNextScene">下一项：模特换装</span>
+      </section>
+
+      <section class="drawer-section">
+        <div class="drawer-section-title"><b>直播互动</b><span id="voiceState">语音等待开启</span></div>
+        <div class="chat-list compact-chat" id="chatList"><div class="empty-chat"><b>等待直播间互动</b><span>观众发送“改图 / 4K / 电商”可切换演示</span></div></div>
+      </section>
+
+      <section class="drawer-actions">
+        <button id="toggleVoice" type="button">开启讲解</button>
+        <button id="runDemo" class="run-demo-action" type="button">播放下一页</button>
+        <button id="reloadPlatform" type="button">从第一页重新播放</button>
+        <a id="loginPlatform" href="https://img.ziling.site/" target="_blank" rel="noreferrer">打开灵图AI平台</a>
+        <a id="joinGroup" href="#" target="_blank" rel="noreferrer">关注后进群试用</a>
+        <a href="/admin/" target="_blank" rel="noreferrer">后台配置</a>
+      </section>
+    </aside>
+
+    <div class="drawer-backdrop" id="drawerBackdrop"></div>
+    <div class="audience-pop" id="audiencePop"><div class="audience-pop-icon">灵</div><div><small id="audiencePopLabel">欢迎进入直播间</small><b id="audiencePopText">想看什么功能直接发弹幕</b></div></div>
+    <div class="toast" id="toast"></div>
+
+    <div class="voice-gate compact-voice-gate" id="voiceGate">
+      <div class="voice-gate-card">
+        <div class="voice-icon">♪</div><span>灵图AI产品直播</span><h2>开启 AI 语音讲解</h2>
+        <p id="voiceGateDesc">画面会自动轮播产品截图，AI根据当前功能连续讲解。</p>
+        <button class="primary-action" id="enableVoice">开启讲解</button><button class="quiet-action" id="skipVoice">暂不开启</button>
+      </div>
+    </div>
+
+    <div class="live-hidden-copy" aria-hidden="true">
+      <span id="retentionTitle"></span><span id="tickerText"></span><span id="clock"></span>
+    </div>
+  </main>
+  <script src="/app.js?v=20260815-sales-scenes-v1"></script>
+</body>
+</html>

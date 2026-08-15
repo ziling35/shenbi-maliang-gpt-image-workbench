@@ -7,6 +7,7 @@ import { AddAssetFromImageModal } from "../components/AddAssetFromImageModal";
 import { AddCaseModal, type AddCaseSource } from "../components/AddCaseModal";
 import { PageHeaderViewToggle } from "../components/HorizontalScrollers";
 import { MyImageCard } from "../components/MyImageCard";
+import { PromptViewerDialog } from "../components/PromptViewerDialog";
 import { ImagePreviewModal } from "../components/ImagePreviewModal";
 import { ImageBatchAssetDialog } from "../components/images/ImageBatchAssetDialog";
 import { ImageBatchCaseDialog } from "../components/images/ImageBatchCaseDialog";
@@ -224,6 +225,7 @@ export function ImagesPage({
   const setEditImage = useWorkbench((state) => state.setEditImage);
   const setEditorImageRequest = useWorkbench((state) => state.setEditorImageRequest);
   const setDraftPrompt = useWorkbench((state) => state.setDraftPrompt);
+  const setSelectedAssets = useWorkbench((state) => state.setSelectedAssets);
   const { showToast } = useToast();
   const { resolvedLanguage, t } = useI18n();
   const assetCategories = useQuery({ queryKey: ["asset-categories"], queryFn: api.assetCategories });
@@ -241,6 +243,7 @@ export function ImagesPage({
   const [batchDeleteImpact, setBatchDeleteImpact] = useState<ImageDeleteImpact | null>(null);
   const [batchResult, setBatchResult] = useState<BatchResultState | null>(null);
   const [batchCaseOpen, setBatchCaseOpen] = useState(false);
+  const [promptImage, setPromptImage] = useState<WorkImage | null>(null);
   const [viewMode, setViewMode] = useState<ImagesViewMode>(storedImagesViewMode);
   const [keyword, setKeyword] = useState(() => urlKeyword);
   const debouncedKeyword = useDebouncedValue(keyword, 250);
@@ -603,60 +606,36 @@ export function ImagesPage({
     }).then((result) => result.image),
     [queryClient]
   );
-  const openEditor = useCallback(async (image: WorkImage) => {
+  const openEditor = useCallback((image: WorkImage) => {
     const index = imageList.findIndex((item) => item.id === image.id);
-    const neighborCards = imageList.slice(Math.max(0, index - 1), Math.min(imageList.length, index + 2));
+    const pageInfo = images.data?.pages.at(-1)?.pageInfo;
+    const continuationDirection = timelineSort === "asc" ? "newer" : "older";
+    const libraryContinuations = pageInfo?.hasMore && pageInfo.nextCursor
+      ? { [continuationDirection]: { keyword: debouncedKeyword, favoriteOnly, sort: timelineSort, nextCursor: pageInfo.nextCursor, hasMore: true } }
+      : undefined;
+    setDraftPrompt("");
+    setEditImage(null);
+    setEditorImageRequest({
+      image,
+      images: orderedWorkImages(imageList, "desc"),
+      imageSort: "desc",
+      totalImageCount: favoriteOnly ? imageList.filter((item) => item.favorited).length : imageList.length,
+      libraryContinuations,
+      persistAcrossSessionChange: true
+    });
+    navigate("/");
+    void queryClient.prefetchQuery({ queryKey: ["image-detail", image.id], queryFn: ({ signal }) => api.imageDetail(image.id, { signal }), staleTime: 30_000 });
+  }, [debouncedKeyword, favoriteOnly, imageList, images.data?.pages, navigate, queryClient, setDraftPrompt, setEditImage, setEditorImageRequest, timelineSort]);
+  const useImageAsMaterial = useCallback(async (image: WorkImage) => {
     try {
-      const [active, counts] = await Promise.all([
-        loadImageDetail(image.id),
-        imageFacets.data
-          ? Promise.resolve(imageFacets.data)
-          : queryClient.fetchQuery({
-              queryKey: ["images", "library-facets", debouncedKeyword],
-              queryFn: ({ signal }) => api.libraryImageFacets({ keyword: debouncedKeyword }, { signal }),
-              staleTime: 30_000,
-              gcTime: 10 * 60_000
-            }).catch(() => ({
-              all: imageList.length,
-              favorite: imageList.filter((item) => item.favorited).length
-            }))
-      ]);
-      if (!active) throw new Error(t("globalSearch.openUnavailable"));
-      const pageInfo = images.data?.pages.at(-1)?.pageInfo;
-      const continuationDirection = timelineSort === "asc" ? "newer" : "older";
-      const libraryContinuations = pageInfo?.hasMore && pageInfo.nextCursor
-        ? {
-            [continuationDirection]: {
-              keyword: debouncedKeyword,
-              favoriteOnly,
-              sort: timelineSort,
-              nextCursor: pageInfo.nextCursor,
-              hasMore: true
-            }
-          }
-        : undefined;
-      setDraftPrompt("");
-      setEditImage(null);
-      setEditorImageRequest({
-        image: active,
-        images: orderedWorkImages(imageList.map((item) => item.id === active.id ? active : item), "desc"),
-        imageSort: "desc",
-        totalImageCount: favoriteOnly ? counts.favorite : counts.all,
-        libraryContinuations
-      });
+      const result = await api.addAssetFromImage({ imageId: image.id, spaceMode: "private", categoryIds: [] });
+      if (!result.asset) throw new Error(t("globalSearch.openUnavailable"));
+      setSelectedAssets([result.asset]);
       navigate("/");
-      for (const item of neighborCards) {
-        if (item.id === active.id) continue;
-        void queryClient.prefetchQuery({
-          queryKey: ["image-detail", item.id],
-          queryFn: ({ signal }) => api.imageDetail(item.id, { signal }),
-          staleTime: 30_000
-        });
-      }
     } catch (error) {
       showToast(error instanceof Error ? error.message : t("globalSearch.openUnavailable"), "error");
     }
-  }, [debouncedKeyword, favoriteOnly, imageFacets.data, imageList, images.data?.pages, loadImageDetail, navigate, queryClient, setDraftPrompt, setEditImage, setEditorImageRequest, showToast, t, timelineSort]);
+  }, [navigate, setSelectedAssets, showToast, t]);
   const startImageCreation = useCallback(() => {
     setDraftPrompt("");
     setEditImage(null);
@@ -877,6 +856,8 @@ export function ImagesPage({
               onOpenEditor={openEditor}
               onAddCase={addCaseFromImage}
               onAddAsset={openAssetFromImage}
+              onUseAsMaterial={useImageAsMaterial}
+              onShowPrompt={setPromptImage}
               onDelete={setDeleteTarget}
               onToggleFavorite={toggleImageFavorite}
               onToggleSelected={toggleSelectedImage}
@@ -964,6 +945,8 @@ export function ImagesPage({
                     onOpenEditor={openEditor}
                     onAddCase={addCaseFromImage}
                     onAddAsset={openAssetFromImage}
+                    onUseAsMaterial={useImageAsMaterial}
+                    onShowPrompt={setPromptImage}
                     onDelete={setDeleteTarget}
                     onToggleFavorite={toggleImageFavorite}
                     onToggleSelected={toggleSelectedImage}
@@ -1126,6 +1109,7 @@ export function ImagesPage({
           onClose={clearOpenImage}
         />
       ) : null}
+      {promptImage ? <PromptViewerDialog prompt={promptImage.originPrompt?.trim() || promptImage.prompt} onClose={() => setPromptImage(null)} /> : null}
       {assetTarget ? (
         <AddAssetFromImageModal
           image={assetTarget}

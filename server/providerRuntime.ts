@@ -5,6 +5,7 @@ import { request as httpsRequest } from "node:https";
 import {
   AUTO_PROVIDER_ID,
   CPA_RESPONSES_MODEL_FALLBACK,
+  customImageDimensions,
   DEFAULT_IMAGE_MODEL,
   DEFAULT_RESPONSES_MODEL,
   IMAGE_JOB_RUNNING_TIMEOUT_MS,
@@ -42,6 +43,12 @@ import {
   safeJson
 } from "./utils";
 
+export type ProviderStreamingImageSink = {
+  write: (chunk: Uint8Array) => Promise<void> | void;
+  finish: () => Promise<void> | void;
+  fail: () => Promise<void> | void;
+};
+
 type ProviderRequestContext = {
   userId?: string;
   jobId?: string;
@@ -49,6 +56,7 @@ type ProviderRequestContext = {
   maxAttempts?: number;
   isRetry?: boolean;
   signal?: AbortSignal;
+  onStreamingImageStart?: (input: { provider: ProviderRow; mimeType: string }) => Promise<ProviderStreamingImageSink | null> | ProviderStreamingImageSink | null;
 };
 
 export class ProviderRequestCancelledError extends Error {
@@ -64,6 +72,10 @@ function assertProviderRequestActive(context: ProviderRequestContext) {
 
 export function providerRequestWasCancelled(error: unknown, signal?: AbortSignal) {
   return signal?.aborted === true || error instanceof ProviderRequestCancelledError;
+}
+
+export function providerRequestMustNotRetry(error: unknown) {
+  return Boolean(error && typeof error === "object" && (error as { nonRetryable?: boolean }).nonRetryable);
 }
 
 function providerRequestLogContext(context: ProviderRequestContext) {
@@ -82,9 +94,11 @@ function providerMatchesImageMode(provider: RuntimeProviderRow, settings = image
   return normalizeProviderChannel(provider.channel || inferChannelFromType(provider.type)) === mode;
 }
 
-export function shouldRequestOpenAiCompatibleBase64(provider: RuntimeProviderRow) {
+export function openAiCompatibleImageResponseFormat(provider: RuntimeProviderRow): "url" | "b64_json" | null {
   const channel = normalizeProviderChannel(provider.channel || inferChannelFromType(provider.type));
-  return channel !== "chatgpt_web";
+  if (channel === "chatgpt_web" || provider.protocol === "gemini_image") return null;
+  if (provider.image_response_format === "url") return "url";
+  return "b64_json";
 }
 
 function greatestCommonDivisor(left: number, right: number): number {
@@ -127,38 +141,38 @@ function imageModeLabel(mode: ImageGenerationSettings["mode"]) {
   return "自动选择模式";
 }
 
-function providerChannelSort(provider: RuntimeProviderRow) {
-  const channel = normalizeProviderChannel(provider.channel || inferChannelFromType(provider.type));
-  if (channel === "cpa") return 0;
-  if (channel === "chatgpt_web") return 1;
-  return 2;
-}
-
 function sortProvidersForRuntime(providers: RuntimeProviderRow[]) {
   return [...providers].sort((left, right) => {
-    const channelOrder = providerChannelSort(left) - providerChannelSort(right);
-    if (channelOrder !== 0) return channelOrder;
-    return String(left.created_at).localeCompare(String(right.created_at));
+    const sortOrder = Number(left.sort_order ?? 100) - Number(right.sort_order ?? 100);
+    if (sortOrder !== 0) return sortOrder;
+    return String(left.created_at).localeCompare(String(right.created_at)) || String(left.id).localeCompare(String(right.id));
   });
 }
 
 function enabledProviderRows() {
   return getAll<ProviderRow>(
     configDb,
-    "select * from provider_configs where enabled = 1 order by created_at asc"
+    "select * from provider_configs where enabled = 1 order by sort_order asc, created_at asc, rowid asc"
   );
 }
 
 export function enabledProvidersForCurrentMode() {
   const settings = imageGenerationSettings();
-  const enabledBillingModels = new Set(
-    getAll<{ model: string }>(configDb, "select model from billing_model_prices where enabled = 1")
-      .map((row) => String(row.model ?? "").trim())
-      .filter(Boolean)
+  const billingPrices = getAll<{ provider_id: string; model: string; enabled: number }>(
+    configDb,
+    "select provider_id,model,enabled from billing_model_prices"
+  );
+  const priceByProviderAndModel = new Map<string, boolean>(
+    billingPrices.map((row) => [`${String(row.provider_id ?? "").trim()}\u0000${String(row.model ?? "").trim()}`, Boolean(row.enabled)] as const)
   );
   return sortProvidersForRuntime(enabledProviderRows().filter((provider) => (
     providerMatchesImageMode(provider, settings)
-    && enabledBillingModels.has(String(provider.model ?? "").trim())
+    && (() => {
+      const model = String(provider.model ?? "").trim();
+      const providerKey = `${provider.id}\u0000${model}`;
+      if (priceByProviderAndModel.has(providerKey)) return priceByProviderAndModel.get(providerKey) === true;
+      return priceByProviderAndModel.get(`\u0000${model}`) === true;
+    })()
   )));
 }
 
@@ -183,7 +197,7 @@ export function providerById(id?: string) {
 function cpaProviderId() {
   return getOne<{ id: string }>(
     configDb,
-    "select id from provider_configs where channel = ? and enabled = 1 order by created_at asc limit 1",
+    "select id from provider_configs where channel = ? and enabled = 1 order by sort_order asc, created_at asc, rowid asc limit 1",
     "cpa"
   )?.id ?? "";
 }
@@ -1088,15 +1102,19 @@ export async function refreshImageAccountUsages(accountId?: string) {
 
 function responsesInputImages(payload: Record<string, unknown>) {
   const images = Array.isArray(payload.images) ? payload.images : [];
-  return images
+  const values = images
     .map((item) => {
       if (typeof item === "string") return item;
       if (item && typeof item === "object") {
-        return String((item as Record<string, unknown>).image_url ?? "");
+        return String((item as Record<string, unknown>).image_url ?? (item as Record<string, unknown>).url ?? "");
       }
       return "";
     })
     .filter(Boolean);
+  const singleImage = payload.image && typeof payload.image === "object"
+    ? String((payload.image as Record<string, unknown>).url ?? (payload.image as Record<string, unknown>).image_url ?? "")
+    : String(payload.image_url ?? "");
+  return Array.from(new Set([...values, singleImage].filter(Boolean)));
 }
 
 function imageModelBaseName(model: unknown) {
@@ -1171,7 +1189,11 @@ function resolveResponsesModel(provider: ProviderRow, override?: string) {
   const explicit = String(override ?? "").trim();
   if (explicit) return explicit;
   const configured = String(provider.responses_model ?? "").trim();
-  return configured || DEFAULT_RESPONSES_MODEL;
+  if (configured) return configured;
+  if (normalizeProviderChannel(provider.channel || inferChannelFromType(provider.type)) === "chatgpt_web") {
+    return DEFAULT_RESPONSES_MODEL;
+  }
+  throw new Error("当前渠道启用了 Responses 路由，但未配置 Responses 主模型");
 }
 
 function collectResponsesImageData(frames: unknown[]) {
@@ -1301,18 +1323,31 @@ async function executeProviderJsonRequest(
 ) {
   const started = performance.now();
   let statusCode: number | null = null;
+  let responseHeadersMs = 0;
+  let responseBodyMs = 0;
+  let responseBytes = 0;
+  let requestDispatched = false;
   try {
-    const { response, text } = await withProviderRequestTimeout(async (signal) => {
+    const { response, text, headersMs, bodyMs } = await withProviderRequestTimeout(async (signal) => {
+      requestDispatched = true;
       const response = await providerFetch(provider, endpoint, {
         method: "POST",
         headers: providerHeaders(provider, "application/json", accept),
         body: JSON.stringify(payload),
         signal
       });
-      return { response, text: await response.text() };
+      const headersMs = performance.now() - started;
+      statusCode = response.status;
+      responseHeadersMs = headersMs;
+      const bodyStarted = performance.now();
+      const text = await response.text();
+      return { response, text, headersMs, bodyMs: performance.now() - bodyStarted };
     }, context.signal);
 
     statusCode = response.status;
+    responseHeadersMs = headersMs;
+    responseBodyMs = bodyMs;
+    responseBytes = Buffer.byteLength(text);
     if (!response.ok) {
       throw new Error(providerHttpErrorMessage(response.status, text));
     }
@@ -1325,11 +1360,18 @@ async function executeProviderJsonRequest(
       endpoint,
       statusCode,
       durationMs: performance.now() - started,
+      responseHeadersMs,
+      responseBodyMs,
+      responseBytes,
       success: true,
       ...providerRequestLogContext(context)
     });
     return parsed;
   } catch (error) {
+    if (error instanceof Error && requestDispatched && (statusCode === null || (statusCode >= 200 && statusCode < 300))) {
+      (error as Error & { nonRetryable?: boolean }).nonRetryable = true;
+      error.message = `图片请求已发送，但响应接收中断；为避免重复扣费，系统已停止自动回退和重试：${error.message}`;
+    }
     logProviderRequest({
       provider,
       operation,
@@ -1337,6 +1379,9 @@ async function executeProviderJsonRequest(
       endpoint,
       statusCode,
       durationMs: performance.now() - started,
+      responseHeadersMs,
+      responseBodyMs,
+      responseBytes,
       success: false,
       error: error instanceof Error ? error.message : String(error),
       ...providerRequestLogContext(context)
@@ -1363,7 +1408,7 @@ function bufferFromDataUrl(dataUrl: string) {
   return { mimeType, buffer };
 }
 
-function buildImageEditForm(payload: Record<string, unknown>) {
+function buildImageEditForm(provider: ProviderRow, payload: Record<string, unknown>) {
   const form = new FormData();
   const images = responsesInputImages(payload);
   if (images.length === 0) throw new Error("请选择要编辑的图片或素材");
@@ -1376,8 +1421,9 @@ function buildImageEditForm(payload: Record<string, unknown>) {
   if (payload.output_format) form.set("output_format", String(payload.output_format));
   if (payload.input_fidelity) form.set("input_fidelity", String(payload.input_fidelity));
   if (payload.response_format) form.set("response_format", String(payload.response_format));
+  const imageField = provider.image_form_field === "image[]" ? "image[]" : "image";
   images.forEach((imageUrl, index) => {
-    form.append("image", fileFromDataUrl(imageUrl, `image-${index + 1}.png`));
+    form.append(imageField, fileFromDataUrl(imageUrl, `image-${index + 1}.png`));
   });
   if (typeof payload.mask === "string" && payload.mask.trim()) {
     form.set("mask", fileFromDataUrl(payload.mask, "mask.png"));
@@ -1392,6 +1438,80 @@ function buildImageEditForm(payload: Record<string, unknown>) {
   return form;
 }
 
+const GROK_IMAGE_RATIOS: Record<string, string> = {
+  "1024x1024": "1:1", "2048x2048": "1:1",
+  "1376x768": "16:9", "2752x1536": "16:9",
+  "768x1376": "9:16", "1536x2752": "9:16",
+  "1200x896": "4:3", "2400x1792": "4:3",
+  "896x1200": "3:4", "1792x2400": "3:4",
+  "1264x848": "3:2", "2528x1696": "3:2",
+  "848x1264": "2:3", "1696x2528": "2:3",
+  "1152x928": "5:4", "2304x1856": "5:4",
+  "928x1152": "4:5", "1856x2304": "4:5",
+  "1584x672": "21:9", "3168x1344": "21:9"
+};
+
+const NATIVE_IMAGE_ASPECT_RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9", "8:1", "4:1", "1:4", "1:8"];
+
+function closestNativeImageAspectRatio(width: number, height: number) {
+  const requested = width / height;
+  return NATIVE_IMAGE_ASPECT_RATIOS.reduce((closest, candidate) => {
+    const [candidateWidth, candidateHeight] = candidate.split(":").map(Number);
+    const [closestWidth, closestHeight] = closest.split(":").map(Number);
+    const candidateDistance = Math.abs(Math.log(requested / (candidateWidth / candidateHeight)));
+    const closestDistance = Math.abs(Math.log(requested / (closestWidth / closestHeight)));
+    return candidateDistance < closestDistance ? candidate : closest;
+  }, NATIVE_IMAGE_ASPECT_RATIOS[0]);
+}
+
+function requestedImageResolutionTier(payload: Record<string, unknown>, largestSide: number): "1K" | "2K" | "4K" {
+  const explicit = String(payload.resolutionTier ?? "").trim().toUpperCase();
+  if (explicit === "1K" || explicit === "2K" || explicit === "4K") return explicit;
+  if (largestSide > 3200) return "4K";
+  if (largestSide > 1600) return "2K";
+  return "1K";
+}
+
+function grokImageOptions(payload: Record<string, unknown>) {
+  const rawSize = String(payload.size ?? "").trim();
+  const dimensions = customImageDimensions(rawSize);
+  const aspectRatio = GROK_IMAGE_RATIOS[rawSize]
+    || (/^\d+:\d+$/.test(rawSize) ? rawSize : dimensions ? closestNativeImageAspectRatio(dimensions.width, dimensions.height) : "");
+  const largestSide = dimensions ? Math.max(dimensions.width, dimensions.height) : 0;
+  const tier = requestedImageResolutionTier(payload, largestSide);
+  const resolution = tier === "1K" ? "1k" : "2k";
+  return { aspectRatio, resolution };
+}
+
+function buildGrokImagesPayload(mode: "generation" | "edit", payload: Record<string, unknown>) {
+  const { aspectRatio, resolution } = grokImageOptions(payload);
+  const nextPayload: Record<string, unknown> = {
+    model: String(payload.model ?? "").trim() === "grok-imagine-image"
+      ? "grok-imagine-image-2.0"
+      : String(payload.model ?? "").trim(),
+    prompt: String(payload.prompt ?? ""),
+    n: Math.max(1, Math.min(4, Math.trunc(Number(payload.n ?? 1)) || 1)),
+    response_format: payload.response_format === "b64_json" ? "b64_json" : "url"
+  };
+  const explicitAspectRatio = String(payload.aspect_ratio ?? "").trim();
+  const explicitResolution = String(payload.resolution ?? "").trim().toLowerCase();
+  if (explicitAspectRatio || aspectRatio) nextPayload.aspect_ratio = explicitAspectRatio || aspectRatio;
+  if (explicitResolution === "1k" || explicitResolution === "2k") nextPayload.resolution = explicitResolution;
+  else if (resolution) nextPayload.resolution = resolution;
+  const quality = String(payload.quality ?? "").trim().toLowerCase();
+  const model = String(nextPayload.model ?? "").toLowerCase();
+  if (!model.includes("-quality")) {
+    nextPayload.quality = quality === "low" || quality === "medium" ? quality : "medium";
+  }
+  if (mode === "edit" || responsesInputImages(payload).length > 0) {
+    const images = responsesInputImages(payload);
+    if (images.length === 0) throw new Error("请选择要编辑的图片或素材");
+    if (images.length === 1) nextPayload.image = { url: images[0] };
+    else nextPayload.images = images.map((url) => ({ url }));
+  }
+  return nextPayload;
+}
+
 async function executeProviderFormRequest(
   provider: ProviderRow,
   operation: "generation" | "edit",
@@ -1402,18 +1522,31 @@ async function executeProviderFormRequest(
 ) {
   const started = performance.now();
   let statusCode: number | null = null;
+  let responseHeadersMs = 0;
+  let responseBodyMs = 0;
+  let responseBytes = 0;
+  let requestDispatched = false;
   try {
-    const { response, text } = await withProviderRequestTimeout(async (signal) => {
+    const { response, text, headersMs, bodyMs } = await withProviderRequestTimeout(async (signal) => {
+      requestDispatched = true;
       const response = await providerFetch(provider, endpoint, {
         method: "POST",
         headers: providerHeaders(provider, "", "application/json"),
         body: form,
         signal
       });
-      return { response, text: await response.text() };
+      const headersMs = performance.now() - started;
+      statusCode = response.status;
+      responseHeadersMs = headersMs;
+      const bodyStarted = performance.now();
+      const text = await response.text();
+      return { response, text, headersMs, bodyMs: performance.now() - bodyStarted };
     }, context.signal);
 
     statusCode = response.status;
+    responseHeadersMs = headersMs;
+    responseBodyMs = bodyMs;
+    responseBytes = Buffer.byteLength(text);
     if (!response.ok) {
       throw new Error(providerHttpErrorMessage(response.status, text));
     }
@@ -1426,11 +1559,18 @@ async function executeProviderFormRequest(
       endpoint,
       statusCode,
       durationMs: performance.now() - started,
+      responseHeadersMs,
+      responseBodyMs,
+      responseBytes,
       success: true,
       ...providerRequestLogContext(context)
     });
     return parsed;
   } catch (error) {
+    if (error instanceof Error && requestDispatched && (statusCode === null || (statusCode >= 200 && statusCode < 300))) {
+      (error as Error & { nonRetryable?: boolean }).nonRetryable = true;
+      error.message = `图片请求已发送，但响应接收中断；为避免重复扣费，系统已停止自动回退和重试：${error.message}`;
+    }
     logProviderRequest({
       provider,
       operation,
@@ -1438,6 +1578,9 @@ async function executeProviderFormRequest(
       endpoint,
       statusCode,
       durationMs: performance.now() - started,
+      responseHeadersMs,
+      responseBodyMs,
+      responseBytes,
       success: false,
       error: error instanceof Error ? error.message : String(error),
       ...providerRequestLogContext(context)
@@ -1469,30 +1612,105 @@ function streamImageValues(event: unknown) {
   const record = event as Record<string, any>;
   const type = String(record.type ?? "");
   if (type.includes("partial_image")) return [];
-  if (type && !type.includes("completed") && !type.includes("done")) return [];
   const dataItems = Array.isArray(record.data) ? record.data : [];
+  const nestedValues: unknown[] = [];
+  const collectNestedValues = (value: unknown) => {
+    if (Array.isArray(value)) {
+      for (const item of value) collectNestedValues(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const nested = value as Record<string, unknown>;
+    const inlineData = nested.inline_data ?? nested.inlineData;
+    if (inlineData && typeof inlineData === "object") nestedValues.push((inlineData as Record<string, unknown>).data);
+    const fileData = nested.file_data ?? nested.fileData;
+    if (fileData && typeof fileData === "object") {
+      nestedValues.push((fileData as Record<string, unknown>).file_uri ?? (fileData as Record<string, unknown>).fileUri);
+    }
+    for (const child of Object.values(nested)) collectNestedValues(child);
+  };
+  collectNestedValues(event);
   const candidates = [
     record.b64_json,
+    record.url,
+    record.image_url,
     record.image?.b64_json,
+    record.image?.url,
     record.result,
     ...dataItems.flatMap((item) =>
       item && typeof item === "object"
         ? [
             (item as Record<string, unknown>).b64_json,
             (item as Record<string, unknown>).base64,
-            (item as Record<string, unknown>).image
+            (item as Record<string, unknown>).image,
+            (item as Record<string, unknown>).url,
+            (item as Record<string, unknown>).image_url
           ]
         : []
-    )
+    ),
+    ...nestedValues
   ];
   const seen = new Set<string>();
-  return candidates.filter((value): value is string => {
+  const values = candidates.filter((value): value is string => {
     if (typeof value !== "string" || !value.trim()) return false;
     const key = value.replace(/^data:image\/\w+;base64,/, "");
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+  if (values.length === 0 || (type && !type.includes("completed") && !type.includes("done") && !type.includes("image"))) return [];
+  return values;
+}
+
+class GeminiInlineImageStreamDecoder {
+  private prefix = "";
+  private base64Remainder = "";
+  private sink: ProviderStreamingImageSink | null = null;
+  private active = false;
+  private finished = false;
+
+  constructor(private readonly start: (mimeType: string) => Promise<ProviderStreamingImageSink | null>) {}
+
+  async push(text: string) {
+    if (!text || this.finished) return;
+    let source = text;
+    if (!this.active) {
+      const combined = this.prefix + source;
+      const marker = /"(?:inlineData|inline_data)"\s*:\s*\{[\s\S]{0,8192}?"data"\s*:\s*"/i.exec(combined);
+      if (!marker) {
+        this.prefix = combined.slice(-16384);
+        return;
+      }
+      const mimeType = /"(?:mimeType|mime_type)"\s*:\s*"([^"]+)"/i.exec(marker[0])?.[1] || "image/png";
+      this.sink = await this.start(mimeType);
+      this.active = true;
+      source = combined.slice((marker.index ?? 0) + marker[0].length);
+      this.prefix = "";
+    }
+    const closingQuote = source.indexOf('"');
+    const segment = (closingQuote >= 0 ? source.slice(0, closingQuote) : source).replace(/\\\//g, "/").replace(/\s+/g, "");
+    await this.writeBase64(segment, closingQuote >= 0);
+    if (closingQuote >= 0) {
+      this.finished = true;
+      await this.sink?.finish();
+    }
+  }
+
+  async fail() {
+    if (this.finished) return;
+    this.finished = true;
+    await this.sink?.fail();
+  }
+
+  private async writeBase64(value: string, flush: boolean) {
+    this.base64Remainder += value;
+    const usableLength = flush ? this.base64Remainder.length : this.base64Remainder.length - (this.base64Remainder.length % 4);
+    if (usableLength <= 0) return;
+    const encoded = this.base64Remainder.slice(0, usableLength);
+    this.base64Remainder = this.base64Remainder.slice(usableLength);
+    const chunk = Buffer.from(encoded, "base64");
+    if (chunk.length > 0) await this.sink?.write(chunk);
+  }
 }
 
 function streamImageResponses(event: unknown) {
@@ -1500,13 +1718,18 @@ function streamImageResponses(event: unknown) {
   if (values.length === 0 || !event || typeof event !== "object") return [];
   const record = event as Record<string, any>;
   return values.map((value) => ({
-    data: [
-      {
-        b64_json: value,
-        revised_prompt: record.revised_prompt ?? record.prompt ?? ""
-      }
-    ]
+    data: [{
+      ...( /^https?:\/\//i.test(value) ? { url: value } : { b64_json: value }),
+      revised_prompt: record.revised_prompt ?? record.prompt ?? ""
+    }]
   }));
+}
+
+function streamImageKey(responseJson: unknown) {
+  const item = responseJson && typeof responseJson === "object" && Array.isArray((responseJson as any).data)
+    ? (responseJson as any).data[0]
+    : null;
+  return String(item?.b64_json || item?.url || "").replace(/^data:image\/\w+;base64,/, "");
 }
 
 async function executeImagesApiStreamRequest(
@@ -1514,18 +1737,20 @@ async function executeImagesApiStreamRequest(
   endpoint: string,
   payload: Record<string, unknown>,
   onImageResult: (responseJson: unknown) => Promise<void> | void,
-  context: ProviderRequestContext = {}
+  context: ProviderRequestContext = {},
+  options: { operation?: "generation" | "edit"; routeMode?: string; preservePayload?: boolean } = {}
 ) {
   const started = performance.now();
   let statusCode: number | null = null;
   const imageResponses: unknown[] = [];
   const seenImages = new Set<string>();
+  let incrementalDecoder: GeminiInlineImageStreamDecoder | null = null;
   try {
     const responseJson = await withProviderRequestTimeout(async (signal) => {
       const response = await providerFetch(provider, endpoint, {
         method: "POST",
         headers: providerHeaders(provider, "application/json", "text/event-stream"),
-        body: JSON.stringify({ ...payload, stream: true, partial_images: 0 }),
+        body: JSON.stringify(options.preservePayload ? payload : { ...payload, stream: true, partial_images: 0 }),
         signal
       });
       statusCode = response.status;
@@ -1543,47 +1768,58 @@ async function executeImagesApiStreamRequest(
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      if (options.routeMode === "gemini_image_stream" && context.onStreamingImageStart) {
+        incrementalDecoder = new GeminiInlineImageStreamDecoder((mimeType) => Promise.resolve(context.onStreamingImageStart!({ provider, mimeType })));
+      }
+      const expectedImageCount = Math.max(1, Math.trunc(Number(payload.n ?? 1)) || 1);
+      const completedResponse = () => ({
+        data: imageResponses.flatMap((item) => (item as { data: unknown[] }).data)
+      });
       let buffer = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        const textChunk = decoder.decode(value, { stream: true });
+        await incrementalDecoder?.push(textChunk);
+        buffer += textChunk;
         const parsed = sseJsonFrames(buffer);
         buffer = parsed.rest;
         for (const frame of parsed.frames) {
           for (const imageResponse of streamImageResponses(frame)) {
-            const value = (imageResponse as { data: Array<{ b64_json: string }> }).data[0]?.b64_json ?? "";
-            const key = value.replace(/^data:image\/\w+;base64,/, "");
+            const key = streamImageKey(imageResponse);
             if (!key || seenImages.has(key)) continue;
             seenImages.add(key);
             imageResponses.push(imageResponse);
             await onImageResult(imageResponse);
+            if (imageResponses.length >= expectedImageCount) {
+              await reader.cancel().catch(() => undefined);
+              return completedResponse();
+            }
           }
         }
       }
-      buffer += decoder.decode();
+      const textTail = decoder.decode();
+      await incrementalDecoder?.push(textTail);
+      buffer += textTail;
       const parsed = sseJsonFrames(`${buffer}\n\n`);
       for (const frame of parsed.frames) {
         for (const imageResponse of streamImageResponses(frame)) {
-          const value = (imageResponse as { data: Array<{ b64_json: string }> }).data[0]?.b64_json ?? "";
-          const key = value.replace(/^data:image\/\w+;base64,/, "");
+          const key = streamImageKey(imageResponse);
           if (!key || seenImages.has(key)) continue;
           seenImages.add(key);
           imageResponses.push(imageResponse);
           await onImageResult(imageResponse);
+          if (imageResponses.length >= expectedImageCount) return completedResponse();
         }
       }
       if (imageResponses.length === 0) throw new Error("图片接口流式返回中没有找到最终图片");
-      return {
-        data: imageResponses
-          .flatMap((item) => (item as { data: unknown[] }).data)
-      };
+      return completedResponse();
     }, context.signal);
 
     logProviderRequest({
       provider,
-      operation: "generation",
-      routeMode: "images_api_stream",
+      operation: options.operation ?? "generation",
+      routeMode: options.routeMode ?? "images_api_stream",
       endpoint,
       statusCode,
       durationMs: performance.now() - started,
@@ -1592,13 +1828,20 @@ async function executeImagesApiStreamRequest(
     });
     return responseJson;
   } catch (error) {
+    const decoderToFail = incrementalDecoder as GeminiInlineImageStreamDecoder | null;
+    if (decoderToFail) await decoderToFail.fail().catch(() => undefined);
     if (error instanceof Error) {
       (error as Error & { streamedImageCount?: number }).streamedImageCount = imageResponses.length;
+      if (statusCode !== null && statusCode >= 200 && statusCode < 300) {
+        (error as Error & { upstreamAccepted?: boolean; nonRetryable?: boolean }).upstreamAccepted = true;
+        (error as Error & { upstreamAccepted?: boolean; nonRetryable?: boolean }).nonRetryable = true;
+        error.message = `上游已接受图片任务，但流式连接中断；为避免重复扣费，系统已停止自动回退和重试：${error.message}`;
+      }
     }
     logProviderRequest({
       provider,
-      operation: "generation",
-      routeMode: "images_api_stream",
+      operation: options.operation ?? "generation",
+      routeMode: options.routeMode ?? "images_api_stream",
       endpoint,
       statusCode,
       durationMs: performance.now() - started,
@@ -1621,9 +1864,158 @@ async function callImagesApiProvider(
     mode === "generation" ? provider.generation_path : provider.edit_path
   );
   if (mode === "edit") {
-    return executeProviderFormRequest(provider, mode, "images_api", endpoint, buildImageEditForm(payload), context);
+    return executeProviderFormRequest(provider, mode, "images_api", endpoint, buildImageEditForm(provider, payload), context);
   }
   return executeProviderJsonRequest(provider, mode, "images_api", endpoint, payload, "application/json", context);
+}
+
+async function callGrokImagesProvider(
+  provider: ProviderRow,
+  mode: "generation" | "edit",
+  payload: Record<string, unknown>,
+  context: ProviderRequestContext = {}
+) {
+  const endpoint = grokImagesEndpoint(provider, mode);
+  if (mode === "edit" && typeof payload.mask === "string" && payload.mask.trim()) {
+    throw new Error("Grok Web 图片编辑接口暂不支持遮罩参数，请改用普通参考图编辑");
+  }
+  return executeProviderJsonRequest(provider, mode, "grok_images", endpoint, buildGrokImagesPayload(mode, payload), "application/json", context);
+}
+
+function grokImagesEndpoint(provider: ProviderRow, mode: "generation" | "edit") {
+  const configuredPath = mode === "generation" ? provider.generation_path : provider.edit_path;
+  const baseUrl = String(provider.base_url || "").replace(/\/+$/, "");
+  const normalizedPath = baseUrl.match(/\/v1$/i) && String(configuredPath).startsWith("/v1/")
+    ? String(configuredPath).slice(3)
+    : configuredPath;
+  return normalizePath(provider.base_url, normalizedPath);
+}
+
+const GEMINI_IMAGE_SIZE_MAP: Record<string, { aspectRatio: string; imageSize: "1K" | "2K" | "4K" }> = {
+  "1024x1024": { aspectRatio: "1:1", imageSize: "1K" },
+  "2048x2048": { aspectRatio: "1:1", imageSize: "2K" },
+  "4096x4096": { aspectRatio: "1:1", imageSize: "4K" },
+  "1376x768": { aspectRatio: "16:9", imageSize: "1K" },
+  "2752x1536": { aspectRatio: "16:9", imageSize: "2K" },
+  "5504x3072": { aspectRatio: "16:9", imageSize: "4K" },
+  "768x1376": { aspectRatio: "9:16", imageSize: "1K" },
+  "1536x2752": { aspectRatio: "9:16", imageSize: "2K" },
+  "3072x5504": { aspectRatio: "9:16", imageSize: "4K" },
+  "1200x896": { aspectRatio: "4:3", imageSize: "1K" },
+  "2400x1792": { aspectRatio: "4:3", imageSize: "2K" },
+  "4800x3584": { aspectRatio: "4:3", imageSize: "4K" },
+  "896x1200": { aspectRatio: "3:4", imageSize: "1K" },
+  "1792x2400": { aspectRatio: "3:4", imageSize: "2K" },
+  "3584x4800": { aspectRatio: "3:4", imageSize: "4K" },
+  "1264x848": { aspectRatio: "3:2", imageSize: "1K" },
+  "2528x1696": { aspectRatio: "3:2", imageSize: "2K" },
+  "5056x3392": { aspectRatio: "3:2", imageSize: "4K" },
+  "848x1264": { aspectRatio: "2:3", imageSize: "1K" },
+  "1696x2528": { aspectRatio: "2:3", imageSize: "2K" },
+  "3392x5056": { aspectRatio: "2:3", imageSize: "4K" },
+  "1152x928": { aspectRatio: "5:4", imageSize: "1K" },
+  "2304x1856": { aspectRatio: "5:4", imageSize: "2K" },
+  "4608x3712": { aspectRatio: "5:4", imageSize: "4K" },
+  "928x1152": { aspectRatio: "4:5", imageSize: "1K" },
+  "1856x2304": { aspectRatio: "4:5", imageSize: "2K" },
+  "3712x4608": { aspectRatio: "4:5", imageSize: "4K" },
+  "1584x672": { aspectRatio: "21:9", imageSize: "1K" },
+  "3168x1344": { aspectRatio: "21:9", imageSize: "2K" },
+  "6336x2688": { aspectRatio: "21:9", imageSize: "4K" },
+  "2928x352": { aspectRatio: "8:1", imageSize: "1K" },
+  "5856x704": { aspectRatio: "8:1", imageSize: "2K" },
+  "11712x1408": { aspectRatio: "8:1", imageSize: "4K" },
+  "2064x512": { aspectRatio: "4:1", imageSize: "1K" },
+  "4128x1024": { aspectRatio: "4:1", imageSize: "2K" },
+  "8256x2048": { aspectRatio: "4:1", imageSize: "4K" },
+  "512x2064": { aspectRatio: "1:4", imageSize: "1K" },
+  "1024x4128": { aspectRatio: "1:4", imageSize: "2K" },
+  "2048x8256": { aspectRatio: "1:4", imageSize: "4K" },
+  "352x2928": { aspectRatio: "1:8", imageSize: "1K" },
+  "704x5856": { aspectRatio: "1:8", imageSize: "2K" },
+  "1408x11712": { aspectRatio: "1:8", imageSize: "4K" }
+};
+
+function geminiImageEndpoint(provider: ProviderRow) {
+  const configured = String(provider.generation_path || "").trim() || "/v1beta/models/{model}:generateContent";
+  return normalizePath(provider.base_url, configured.replace(/\{model\}/g, encodeURIComponent(provider.model)));
+}
+
+function geminiImageStreamEndpoint(provider: ProviderRow) {
+  const endpoint = new URL(geminiImageEndpoint(provider));
+  endpoint.pathname = endpoint.pathname.replace(/:generateContent$/i, ":streamGenerateContent");
+  endpoint.searchParams.set("alt", "sse");
+  return endpoint.toString();
+}
+
+function geminiImagePart(image: string) {
+  const dataUrl = image.match(/^data:([^;,]+)?;base64,(.*)$/s);
+  if (dataUrl) {
+    return { inline_data: { mime_type: dataUrl[1] || "image/png", data: dataUrl[2] } };
+  }
+  return { file_data: { mime_type: "image/png", file_uri: image } };
+}
+
+function buildGeminiImagePayload(provider: ProviderRow, mode: "generation" | "edit", payload: Record<string, unknown>, responseFormat?: "url" | "b64_json") {
+  const parts: Array<Record<string, unknown>> = [{ text: String(payload.prompt ?? "").trim() }];
+  if (mode === "edit") {
+    for (const image of responsesInputImages(payload)) parts.push(geminiImagePart(image));
+  }
+  const imageConfig: Record<string, unknown> = {};
+  const requestedSize = String(payload.size ?? "").trim();
+  const mappedSize = GEMINI_IMAGE_SIZE_MAP[requestedSize];
+  const customDimensions = customImageDimensions(requestedSize);
+  if (mappedSize) {
+    imageConfig.aspectRatio = mappedSize.aspectRatio;
+    imageConfig.imageSize = mappedSize.imageSize;
+  } else if (/^(1K|2K|4K)$/i.test(requestedSize)) {
+    imageConfig.imageSize = requestedSize.toUpperCase();
+  } else if (/^\d+:\d+$/.test(requestedSize)) {
+    imageConfig.aspectRatio = requestedSize;
+  } else if (customDimensions) {
+    imageConfig.aspectRatio = closestNativeImageAspectRatio(customDimensions.width, customDimensions.height);
+    imageConfig.imageSize = requestedImageResolutionTier(payload, Math.max(customDimensions.width, customDimensions.height));
+  }
+  return {
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      responseModalities: [(responseFormat ?? (provider.image_response_format === "b64_json" ? "b64_json" : "url")) === "b64_json" ? "IMAGE" : "TEXT"],
+      ...(Object.keys(imageConfig).length > 0 ? { imageConfig } : {})
+    }
+  };
+}
+
+async function callGeminiImageProvider(
+  provider: ProviderRow,
+  mode: "generation" | "edit",
+  payload: Record<string, unknown>,
+  context: ProviderRequestContext = {}
+) {
+  const endpoint = geminiImageEndpoint(provider);
+  const preferredFormat = provider.image_response_format === "url" ? "url" : "b64_json";
+  try {
+    return await executeProviderJsonRequest(
+      provider,
+      mode,
+      "gemini_image",
+      endpoint,
+      buildGeminiImagePayload(provider, mode, payload, preferredFormat),
+      "application/json",
+      context
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (preferredFormat !== "url" || !message.includes("responsemodalities") || !message.includes("image")) throw error;
+    return executeProviderJsonRequest(
+      provider,
+      mode,
+      "gemini_image",
+      endpoint,
+      buildGeminiImagePayload(provider, mode, payload, "b64_json"),
+      "application/json",
+      context
+    );
+  }
 }
 
 async function callResponsesProvider(
@@ -1643,28 +2035,6 @@ async function callResponsesProvider(
     buildResponsesPayload(provider, mode, payload, stream, responsesModel),
     stream ? "text/event-stream" : "application/json",
     context
-  );
-}
-
-function shouldFallbackToResponses(provider: ProviderRow, hasMask: boolean, error: unknown) {
-  if (hasMask || normalizeProviderChannel(provider.channel || inferChannelFromType(provider.type)) !== "cpa") {
-    return false;
-  }
-
-  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return (
-    message.includes("socket connection was closed unexpectedly") ||
-    message.includes("socket hang up") ||
-    message.includes("connection closed") ||
-    message.includes("connection reset") ||
-    message.includes("connection terminated") ||
-    message.includes("econnreset") ||
-    message.includes("und_err_socket") ||
-    (message.includes("auth_unavailable") && message.includes("no auth available")) ||
-    (message.includes("auth_not_found") && message.includes("no auth available")) ||
-    message.includes("stream disconnected before completion") ||
-    message.includes("upstream did not return image output") ||
-    message.includes("invalid sse data json")
   );
 }
 
@@ -1705,29 +2075,6 @@ async function callResponsesProviderWithCompatFallback(
       const first = error instanceof Error ? error.message : String(error);
       const second = streamError instanceof Error ? streamError.message : String(streamError);
       throw new Error(`综合接口非流式请求失败：${first}; 流式请求失败：${second}`);
-    }
-  }
-}
-
-async function callImagesApiProviderWithCpaFallback(
-  provider: ProviderRow,
-  mode: "generation" | "edit",
-  payload: Record<string, unknown>,
-  hasMask: boolean,
-  context: ProviderRequestContext = {}
-) {
-  try {
-    return await callImagesApiProvider(provider, mode, payload, context);
-  } catch (imagesError) {
-    if (providerRequestWasCancelled(imagesError, context.signal)) throw new ProviderRequestCancelledError();
-    if (!shouldFallbackToResponses(provider, hasMask, imagesError)) throw imagesError;
-    try {
-      return await callResponsesProviderWithCompatFallback(provider, mode, payload, undefined, context);
-    } catch (responsesError) {
-      if (providerRequestWasCancelled(responsesError, context.signal)) throw new ProviderRequestCancelledError();
-      const first = imagesError instanceof Error ? imagesError.message : String(imagesError);
-      const second = responsesError instanceof Error ? responsesError.message : String(responsesError);
-      throw new Error(`图片接口直连失败：${first}; 综合接口回退失败：${second}`);
     }
   }
 }
@@ -3007,18 +3354,20 @@ export async function callProvider(
   if (channel === "chatgpt_web") {
     return callChatGptWebProvider(provider, mode, payload, context);
   }
-  if (mode === "edit" && hasMask && channel === "cpa") {
-    return callResponsesProviderWithCompatFallback(provider, mode, payload, undefined, context);
+  if (provider.protocol === "grok_images") {
+    return callGrokImagesProvider(provider, mode, payload, context);
+  }
+  if (provider.protocol === "gemini_image") {
+    return callGeminiImageProvider(provider, mode, payload, context);
   }
   if (routeMode === "responses") {
     return callResponsesProviderWithCompatFallback(provider, mode, payload, undefined, context);
   }
-  if (mode === "edit" && hasMask) {
-    return callImagesApiProviderWithSourceReferenceFallback(provider, mode, payload, context);
-  }
   if (routeMode === "auto") {
     try {
-      return await callImagesApiProvider(provider, mode, payload, context);
+      return mode === "edit" && hasMask
+        ? await callImagesApiProviderWithSourceReferenceFallback(provider, mode, payload, context)
+        : await callImagesApiProvider(provider, mode, payload, context);
     } catch (imagesError) {
       if (providerRequestWasCancelled(imagesError, context.signal)) throw new ProviderRequestCancelledError();
       try {
@@ -3031,10 +3380,13 @@ export async function callProvider(
       }
     }
   }
-  return callImagesApiProviderWithCpaFallback(provider, mode, payload, Boolean(hasMask), context);
+  if (mode === "edit" && hasMask) {
+    return callImagesApiProviderWithSourceReferenceFallback(provider, mode, payload, context);
+  }
+  return callImagesApiProvider(provider, mode, payload, context);
 }
 
-function payloadForProvider(provider: RuntimeProviderRow, payload: Record<string, unknown>) {
+function payloadForProvider(provider: RuntimeProviderRow, mode: "generation" | "edit", payload: Record<string, unknown>) {
   const channel = normalizeProviderChannel(provider.channel || inferChannelFromType(provider.type));
   const hasMask = typeof payload.mask === "string" && payload.mask.trim();
   const nextPayload: Record<string, unknown> = {
@@ -3044,8 +3396,9 @@ function payloadForProvider(provider: RuntimeProviderRow, payload: Record<string
   if (isGptImage2Family(nextPayload.model)) {
     delete nextPayload.input_fidelity;
   }
-  if (shouldRequestOpenAiCompatibleBase64(provider)) {
-    nextPayload.response_format = "b64_json";
+  const responseFormat = openAiCompatibleImageResponseFormat(provider);
+  if (responseFormat) {
+    nextPayload.response_format = responseFormat;
   } else {
     delete nextPayload.response_format;
   }
@@ -3055,7 +3408,11 @@ function payloadForProvider(provider: RuntimeProviderRow, payload: Record<string
   if (channel !== "chatgpt_web") {
     delete nextPayload.webConversationContext;
   }
-  return injectAspectRatioInstruction(nextPayload);
+  const injectedPayload = injectAspectRatioInstruction(nextPayload);
+  if (provider.protocol === "grok_images") {
+    return buildGrokImagesPayload(mode, injectedPayload);
+  }
+  return injectedPayload;
 }
 
 type ProviderChainResponseHandler<T> = (input: {
@@ -3068,21 +3425,93 @@ export async function callProviderChain<T = undefined>(
   mode: "generation" | "edit",
   payload: Record<string, unknown>,
   context: ProviderRequestContext = {},
-  onProviderResponse?: ProviderChainResponseHandler<T>
+  onProviderResponse?: ProviderChainResponseHandler<T>,
+  onProviderImageResult?: ProviderChainResponseHandler<T>
 ) {
   const errors: string[] = [];
   for (const provider of providers) {
     assertProviderRequestActive(context);
     try {
-      const responseJson = await callProvider(provider, mode, payloadForProvider(provider, payload), context);
+      let streamedResult: T | undefined;
+      let receivedStreamedImage = false;
+      const providerPayload = payloadForProvider(provider, mode, payload);
+      const providerResponse = onProviderImageResult
+        ? await callProviderWithProgress(provider, mode, providerPayload, async (responseJson) => {
+            receivedStreamedImage = true;
+            streamedResult = await onProviderImageResult({ provider, responseJson });
+          }, context)
+        : { responseJson: await callProvider(provider, mode, providerPayload, context), streamed: false };
+      const responseJson = providerResponse.responseJson;
+      if (providerResponse.streamed && receivedStreamedImage) {
+        return { provider, responseJson, result: streamedResult };
+      }
       const result = onProviderResponse ? await onProviderResponse({ provider, responseJson }) : undefined;
       return { provider, responseJson, result };
     } catch (error) {
       if (providerRequestWasCancelled(error, context.signal)) throw new ProviderRequestCancelledError();
+      if (providerRequestMustNotRetry(error)) throw error;
       errors.push(`${provider.name}：${error instanceof Error ? error.message : String(error)}`);
     }
   }
   throw new Error(errors.join("; ") || `${mode === "edit" ? "图片编辑" : "图片生成"}没有可用渠道`);
+}
+
+async function callProviderWithProgress(
+  provider: RuntimeProviderRow,
+  mode: "generation" | "edit",
+  payload: Record<string, unknown>,
+  onImageResult: (responseJson: unknown) => Promise<void> | void,
+  context: ProviderRequestContext = {}
+) {
+  const providerPayload = payload;
+  if (provider.protocol === "gemini_image" && Boolean(provider.stream_enabled)) {
+    try {
+      const responseJson = await executeImagesApiStreamRequest(
+        provider,
+        geminiImageStreamEndpoint(provider),
+        buildGeminiImagePayload(provider, mode, providerPayload, "b64_json"),
+        onImageResult,
+        context,
+        { operation: mode, routeMode: "gemini_image_stream", preservePayload: true }
+      );
+      return { responseJson, streamed: true };
+    } catch (error) {
+      if (providerRequestWasCancelled(error, context.signal)) throw new ProviderRequestCancelledError();
+      const streamedImageCount = error instanceof Error ? (error as Error & { streamedImageCount?: number }).streamedImageCount ?? 0 : 0;
+      if (providerRequestMustNotRetry(error)) throw error;
+      if (streamedImageCount === 0) {
+        return { responseJson: await callGeminiImageProvider(provider, mode, providerPayload, context), streamed: false };
+      }
+      throw error;
+    }
+  }
+  if (
+    mode === "generation"
+    && Boolean(provider.stream_enabled)
+    && normalizeProviderChannel(provider.channel || inferChannelFromType(provider.type)) !== "chatgpt_web"
+    && normalizeRouteMode(provider.route_mode) !== "responses"
+  ) {
+    const endpoint = provider.protocol === "grok_images"
+      ? grokImagesEndpoint(provider, "generation")
+      : normalizePath(provider.base_url, provider.generation_path);
+    try {
+      const responseJson = await executeImagesApiStreamRequest(provider, endpoint, providerPayload, onImageResult, context);
+      return { responseJson, streamed: true };
+    } catch (error) {
+      if (providerRequestWasCancelled(error, context.signal)) throw new ProviderRequestCancelledError();
+      const streamedImageCount = error instanceof Error ? (error as Error & { streamedImageCount?: number }).streamedImageCount ?? 0 : 0;
+      if (providerRequestMustNotRetry(error)) throw error;
+      if (streamedImageCount === 0) {
+        const responseJson = provider.protocol === "grok_images"
+          ? await callGrokImagesProvider(provider, "generation", providerPayload, context)
+          : await callImagesApiProvider(provider, "generation", providerPayload, context);
+        return { responseJson, streamed: false };
+      }
+      throw error;
+    }
+  }
+  const responseJson = await callProvider(provider, mode, providerPayload, context);
+  return { responseJson, streamed: false };
 }
 
 export async function callProviderGenerationWithProgress(
@@ -3091,23 +3520,6 @@ export async function callProviderGenerationWithProgress(
   onImageResult: (responseJson: unknown) => Promise<void> | void,
   context: ProviderRequestContext = {}
 ) {
-  const providerPayload = payloadForProvider(provider, payload);
-  if (normalizeProviderChannel(provider.channel || inferChannelFromType(provider.type)) !== "chatgpt_web" && normalizeRouteMode(provider.route_mode) !== "responses") {
-    const endpoint = normalizePath(provider.base_url, provider.generation_path);
-    try {
-      const responseJson = await executeImagesApiStreamRequest(provider, endpoint, providerPayload, onImageResult, context);
-      return { responseJson, streamed: true };
-    } catch (error) {
-      if (providerRequestWasCancelled(error, context.signal)) throw new ProviderRequestCancelledError();
-      const streamedImageCount = error instanceof Error ? (error as Error & { streamedImageCount?: number }).streamedImageCount ?? 0 : 0;
-      if (streamedImageCount === 0) {
-        const responseJson = await callImagesApiProvider(provider, "generation", providerPayload, context);
-        return { responseJson, streamed: false };
-      }
-      throw error;
-    }
-  }
-  const responseJson = await callProvider(provider, "generation", providerPayload, context);
-  return { responseJson, streamed: false };
+  return callProviderWithProgress(provider, "generation", payloadForProvider(provider, "generation", payload), onImageResult, context);
 }
 

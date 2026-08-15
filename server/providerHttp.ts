@@ -14,7 +14,10 @@ export function providerHeaders(provider: ProviderRow, contentType = "applicatio
     Accept: accept
   };
   if (contentType) headers["Content-Type"] = contentType;
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (apiKey) {
+    if (provider.api_key_header === "x-goog-api-key") headers["x-goog-api-key"] = apiKey;
+    else headers.Authorization = `Bearer ${apiKey}`;
+  }
   if (provider.channel === "chatgpt_web") {
     headers["Accept-Language"] = "en-US,en;q=0.9";
     headers.Origin = "https://chatgpt.com";

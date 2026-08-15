@@ -118,7 +118,9 @@ import { deleteUserAccount } from "./userDeletion";
 import { registerInternalDistributionRoutes } from "./internalDistributionRoutes";
 import { registerSiteSettingsRoutes } from "./siteSettingsRoutes";
 import { registerBillingRoutes } from "./billing";
+import { startObjectStorageCacheScheduler } from "./objectStorage";
 import { registerObjectStorageRoutes } from "./objectStorageRoutes";
+import { registerVideoRoutes, startInterruptedVideoJobRecovery } from "./videoRoutes";
 
 initAppDb();
 initConfigDb();
@@ -133,6 +135,7 @@ await migrateLegacyImageTaskSounds();
 const api = new Hono();
 registerBillingRoutes(api);
 registerObjectStorageRoutes(api);
+registerVideoRoutes(api);
 
 function apiErrorMessage(error: unknown, fallback = "服务异常") {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -2030,7 +2033,7 @@ api.get("/config/providers", (c) => {
   if (blocked) return blocked;
   const rows = getAll<ProviderRow>(
     configDb,
-    "select * from provider_configs order by created_at asc"
+    "select * from provider_configs order by sort_order asc, created_at asc, rowid asc"
   );
   return c.json({ providers: rows.map((row) => toProvider(row, false)) });
 });
@@ -2069,7 +2072,7 @@ api.put("/config/providers", async (c) => {
 
   const timestamp = now();
   const savedProviderIds: string[] = [];
-  for (const raw of providers) {
+  for (const [providerIndex, raw] of providers.entries()) {
     const channel = normalizeProviderChannel(String(raw.channel ?? inferChannelFromType(raw.type)));
     let id = String(raw.id ?? "").trim();
     if (!id) {
@@ -2092,20 +2095,42 @@ api.put("/config/providers", async (c) => {
     const webCookies = String(raw.webCookies ?? "");
     const preservedWebCookies =
       webCookies.includes("****") && existing ? existing.web_cookies ?? "" : webCookies;
+    const inferredGrokProtocol = /grok2api\.ziling\.site/i.test(String(raw.baseUrl ?? existing?.base_url ?? ""));
+    const protocol = channel === "chatgpt_web"
+      ? "openai_images"
+      : raw.protocol === "gemini_image" || raw.protocol === "grok_images"
+        ? raw.protocol
+        : inferredGrokProtocol
+          ? "grok_images"
+        : "openai_images";
+    const routeMode = protocol === "gemini_image" || protocol === "grok_images"
+      ? "images_api"
+      : normalizeRouteMode(String(raw.routeMode ?? "images_api"));
+    const quotaMode = normalizeQuotaMode(String(raw.quotaMode ?? "codex_first"));
+    const usesResponses =
+      (channel === "chatgpt_web" && quotaMode !== "official_only") ||
+      (channel !== "chatgpt_web" &&
+        protocol === "openai_images" &&
+        (routeMode === "responses" || routeMode === "auto"));
+    const responsesModel = usesResponses
+      ? String(raw.responsesModel ?? "").trim() || DEFAULT_RESPONSES_MODEL
+      : "";
     run(
       configDb,
       `insert into provider_configs (
-        id, name, type, channel, enabled, base_url, api_key_env, api_key_value,
+        id, name, type, channel, enabled, sort_order, base_url, api_key_env, api_key_value,
         route_mode, generation_path, edit_path, responses_path, model, responses_model,
-        sizes, qualities, default_size, default_quality, response_image_path,
+        sizes, qualities, default_size, default_quality, response_image_path, image_response_format,
+        protocol, stream_enabled, image_form_field, api_key_header,
         proxy_enabled, quota_mode, fallback_to_conversation, web_account_id, web_account_ids, web_account_mode, web_cookies,
         created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(id) do update set
         name = excluded.name,
         type = excluded.type,
         channel = excluded.channel,
         enabled = excluded.enabled,
+        sort_order = excluded.sort_order,
         base_url = excluded.base_url,
         api_key_env = excluded.api_key_env,
         api_key_value = excluded.api_key_value,
@@ -2120,6 +2145,11 @@ api.put("/config/providers", async (c) => {
         default_size = excluded.default_size,
         default_quality = excluded.default_quality,
         response_image_path = excluded.response_image_path,
+        image_response_format = excluded.image_response_format,
+        protocol = excluded.protocol,
+        stream_enabled = excluded.stream_enabled,
+        image_form_field = excluded.image_form_field,
+        api_key_header = excluded.api_key_header,
         proxy_enabled = excluded.proxy_enabled,
         quota_mode = excluded.quota_mode,
         fallback_to_conversation = excluded.fallback_to_conversation,
@@ -2133,22 +2163,30 @@ api.put("/config/providers", async (c) => {
       String(raw.type ?? "openai-compatible"),
       channel,
       Boolean(raw.enabled) ? 1 : 0,
+      providerIndex,
       String(raw.baseUrl ?? "http://127.0.0.1:8317"),
       String(raw.apiKeyEnv ?? ""),
       preservedApiKey,
-      normalizeRouteMode(String(raw.routeMode ?? "images_api")),
+      routeMode,
       normalizeProviderConfigPath(channel, raw.generationPath, "generation"),
       normalizeProviderConfigPath(channel, raw.editPath, "edit"),
       normalizeProviderConfigPath(channel, raw.responsesPath, "responses"),
-      String(raw.model ?? "gpt-image-2"),
-      String(raw.responsesModel ?? "").trim() || DEFAULT_RESPONSES_MODEL,
+      protocol === "grok_images" && String(raw.model ?? "").trim() === "grok-imagine-image"
+        ? "grok-imagine-image-2.0"
+        : String(raw.model ?? "gpt-image-2"),
+      responsesModel,
       JSON.stringify(Array.isArray(raw.sizes) ? raw.sizes.map(String) : DEFAULT_IMAGE_SIZES),
       JSON.stringify(Array.isArray(raw.qualities) ? raw.qualities.map(String) : ["high"]),
       requestImageSize(raw.defaultSize),
       String(raw.defaultQuality ?? "high"),
       String(raw.responseImagePath ?? "data[0].b64_json"),
+      raw.imageResponseFormat === "url" || raw.imageResponseFormat === "b64_json" ? raw.imageResponseFormat : "auto",
+      protocol,
+      raw.streamEnabled === false ? 0 : 1,
+      raw.imageFormField === "image[]" ? "image[]" : "image",
+      raw.apiKeyHeader === "x-goog-api-key" ? "x-goog-api-key" : "authorization",
       Boolean(raw.proxyEnabled) ? 1 : 0,
-      normalizeQuotaMode(String(raw.quotaMode ?? "codex_first")),
+      quotaMode,
       0,
       String(raw.webAccountId ?? ""),
       JSON.stringify(normalizeIdList(raw.webAccountIds)),
@@ -2157,6 +2195,10 @@ api.put("/config/providers", async (c) => {
       existing?.created_at ?? timestamp,
       timestamp
     );
+    const resolutionTiers = Array.isArray(raw.resolutionTiers)
+      ? raw.resolutionTiers.map(String).filter((tier: string) => tier === "1K" || tier === "2K" || tier === "4K")
+      : ["1K", "2K", "4K"];
+    run(configDb, "update provider_configs set resolution_tiers=? where id=?", JSON.stringify(resolutionTiers.length > 0 ? resolutionTiers : ["1K"]), id);
   }
   if (savedProviderIds.length > 0) {
     const placeholders = savedProviderIds.map(() => "?").join(",");
@@ -3091,6 +3133,9 @@ api.get("/config/request-logs", (c) => {
         endpoint: log.endpoint,
         statusCode: log.status_code,
         durationMs: log.duration_ms,
+        responseHeadersMs: Number(log.response_headers_ms ?? 0),
+        responseBodyMs: Number(log.response_body_ms ?? 0),
+        responseBytes: Number(log.response_bytes ?? 0),
         success: Boolean(log.success),
         cancelled: Boolean(log.cancelled),
         error: log.error ?? "",
@@ -3374,6 +3419,14 @@ app.use("/share/*", async (c, next) => {
   c.header("X-Frame-Options", "DENY");
   c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
 });
+app.use("/live-demo", async (c, next) => {
+  await next();
+  const configured = String(Bun.env.LIVE_DEMO_FRAME_ANCESTORS ?? "").trim();
+  const frameAncestors = configured || "'self' http://127.0.0.1:8790 http://localhost:8790";
+  c.header("Content-Security-Policy", `frame-ancestors ${frameAncestors}`);
+  c.header("Cache-Control", "no-store");
+  c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
+});
 app.use("*", serveStatic({ root: "./dist" }));
 app.get("*", async (c) => {
   const indexPath = path.join(ROOT, "dist", "index.html");
@@ -3417,6 +3470,8 @@ const server = Bun.serve({
 (globalThis as typeof globalThis & { __gptImageServer?: typeof server }).__gptImageServer = server;
 
 startInterruptedImageJobRecovery();
+startInterruptedVideoJobRecovery();
 startStarterCopyScheduler();
 scheduleCpaSync();
 startBackupScheduler();
+startObjectStorageCacheScheduler();

@@ -31,7 +31,7 @@ import { type AssetUploadMode } from "../lib/assets";
 import { getAppIntroSlides } from "../lib/featureIntroSlides";
 import { isDefaultCaseItemId } from "../lib/defaultCases";
 import { useI18n, type LocaleCode } from "../i18n";
-import { requestSizeFromSelection, type SizeOption } from "../lib/imageOptions";
+import { requestSizeFromSelection, supportedResolutionTiers, type ImageResolutionTier, type SizeOption } from "../lib/imageOptions";
 import { normalizePromptColorSchemeIds } from "../lib/promptColorSchemes";
 import { normalizePromptOptimizeStyle, sanitizePromptOptimizeStyleGroups } from "../lib/promptOptimizeStyles";
 import { getTimeGreetingKey } from "../lib/timeGreeting";
@@ -73,6 +73,7 @@ type SubmittedDraftSnapshot = {
   providerId: string;
   imageCount: number;
   size: string;
+  resolutionTier: ImageResolutionTier;
   quality: string;
   promptInputOptimizeStyle: ComposerSessionDraft["promptInputOptimizeStyle"];
   promptColorSchemeIds: string[];
@@ -401,6 +402,7 @@ function emptyComposerSessionDraft(): ComposerSessionDraft {
     providerId: "",
     imageCount: 1,
     size: "",
+    resolutionTier: "1K",
     quality: "",
     promptInputOptimizeStyle: "standard",
     promptColorSchemeIds: [],
@@ -419,6 +421,7 @@ function hasComposerDraftContent(draft: Pick<
   | "providerId"
   | "imageCount"
   | "size"
+  | "resolutionTier"
   | "quality"
   | "promptInputOptimizeStyle"
   | "promptColorSchemeIds"
@@ -433,6 +436,7 @@ function hasComposerDraftContent(draft: Pick<
     || draft.providerId
     || draft.imageCount !== 1
     || draft.size
+    || draft.resolutionTier !== "1K"
     || draft.quality
     || draft.promptInputOptimizeStyle !== "standard"
     || draft.promptColorSchemeIds.length > 0
@@ -524,6 +528,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   const pendingSubmitScope = pendingChatSubmit?.scope ?? null;
   const [submittingScopes, setSubmittingScopes] = useState<string[]>([]);
   const [imageCount, setImageCount] = useState(1);
+  const [resolutionTier, setResolutionTier] = useState<ImageResolutionTier>("1K");
   const [promptOptimizerModelValue, setPromptOptimizerModelValue] = useState(() => window.localStorage.getItem("gpt-image.prompt-optimizer-model") ?? "system");
   const [assetTarget, setAssetTarget] = useState<AssetModalTarget | null>(null);
   const [casePickerOpen, setCasePickerOpen] = useState(false);
@@ -550,6 +555,8 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   const starterPromptOptimizeRequestIdRef = useRef(0);
   const submitSessionByRequestRef = useRef(new Map<string, string>());
   const submitLaunchLockRef = useRef(new Set<string>());
+  const pendingLiveDemoSubmitRef = useRef<string | null>(null);
+  const pendingLiveEditRef = useRef<string | null>(null);
   const retryInFlightJobIdsRef = useRef(new Set<string>());
   const submitAbortControllersRef = useRef(new Map<string, AbortController>());
   const cancelledSubmitIdsRef = useRef(new Set<string>());
@@ -680,10 +687,27 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     description: provider.virtual ? "根据后台路由自动选择" : provider.name,
     group: provider.virtual ? "自动" : provider.channel === "api" ? "API" : provider.channel === "cpa" ? "CPA" : "ChatGPT Web"
   })), [providerOptions]);
-  const currentModelPriceCents = currentProvider?.virtual ? null : billingAccount.data?.prices.find((price) => price.model === currentProvider?.model)?.price_cents ?? null;
+  const currentModelPriceCents = currentProvider?.virtual ? null : (() => {
+    const prices = billingAccount.data?.prices ?? [];
+    const providerPrice = prices.find((price) => price.provider_id === currentProvider?.id && price.model === currentProvider?.model);
+    if (providerPrice) return providerPrice.enabled ? providerPrice.price_cents : null;
+    const generalPrice = prices.find((price) => price.provider_id === "" && price.model === currentProvider?.model);
+    return generalPrice?.enabled ? generalPrice.price_cents : null;
+  })();
   const estimatedCostLabel = currentModelPriceCents === null
     ? currentProvider?.virtual ? "费用按实际路由模型结算" : "该模型尚未配置价格"
     : `预计扣费 ¥${((currentModelPriceCents * imageCount) / 100).toFixed(2)}`;
+  const effectiveSizeSelection = size || currentProvider?.defaultSize || sizeOptions[0]?.value || "";
+  const availableResolutionTiers = useMemo(
+    () => supportedResolutionTiers(currentProvider?.resolutionTiers ?? []),
+    [currentProvider?.resolutionTiers]
+  );
+  const actualOutputSize = requestSizeFromSelection(effectiveSizeSelection, resolutionTier);
+
+  useEffect(() => {
+    if (availableResolutionTiers.includes(resolutionTier)) return;
+    setResolutionTier(availableResolutionTiers.at(-1) ?? "1K");
+  }, [availableResolutionTiers, resolutionTier]);
   const composerScopeKey = sessionId ? `user:${user.id}:session:${sessionId}` : COMPOSER_NEW_DRAFT_SCOPE_KEY;
   const composerInstanceKey = sessionId ? composerScopeKey : `${COMPOSER_NEW_DRAFT_SCOPE_KEY}:${newChatResetKey}`;
   const currentComposerDraft = composerDrafts[composerScopeKey] ?? null;
@@ -861,6 +885,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       providerId: request.providerId ?? providerId,
       imageCount: request.n ?? imageCount,
       size: request.size ?? size,
+      resolutionTier: request.resolutionTier ?? resolutionTier,
       quality: request.quality ?? quality,
       promptOptimizerModel: promptOptimizerModelValue,
       promptInputOptimizeStyle: currentPromptInputOptimizeStyle,
@@ -903,6 +928,10 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       };
       try {
         if (cancelledSubmitIdsRef.current.has(request.clientRequestId)) throw new Error("图片任务已取消");
+        const requestSize = requestSizeFromSelection(
+          request.size ?? "",
+          request.resolutionTier ?? resolutionTier
+        );
         if (request.mode === "edit") {
           return await api.edit({
           clientRequestId: request.clientRequestId,
@@ -910,7 +939,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
           providerId: request.providerId,
           prompt: request.prompt,
           ...(request.language ? { language: request.language } : {}),
-          size: requestSizeFromSelection(request.size ?? ""),
+          size: requestSize,
           ...(request.quality ? { quality: request.quality } : {}),
           ...(request.n ? { n: request.n } : {}),
           sourceImageIds: request.sourceImageIds ?? [],
@@ -933,7 +962,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         providerId: request.providerId,
         prompt: request.prompt,
         ...(request.language ? { language: request.language } : {}),
-        size: requestSizeFromSelection(request.size ?? ""),
+        size: requestSize,
         ...(request.quality ? { quality: request.quality } : {}),
         ...(request.n ? { n: request.n } : {}),
         ...(request.caseItemId ? { caseItemId: request.caseItemId } : {}),
@@ -1040,6 +1069,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     providerId,
     imageCount,
     size,
+    resolutionTier,
     quality,
     promptInputOptimizeStyle: currentPromptInputOptimizeStyle,
     promptColorSchemeIds: [...currentPromptColorSchemeIds],
@@ -1057,6 +1087,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     setProviderId(snapshot.providerId);
     setImageCount(snapshot.imageCount);
     setSize(snapshot.size);
+    setResolutionTier(snapshot.resolutionTier);
     setQuality(snapshot.quality);
     setActiveBranchId(snapshot.activeBranchId === MAIN_CHAT_BRANCH_ID ? null : snapshot.activeBranchId);
     upsertComposerDraft(targetScopeKey, {
@@ -1067,6 +1098,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       providerId: snapshot.providerId,
       imageCount: snapshot.imageCount,
       size: snapshot.size,
+      resolutionTier: snapshot.resolutionTier,
       quality: snapshot.quality,
       promptInputOptimizeStyle: snapshot.promptInputOptimizeStyle,
       promptColorSchemeIds: snapshot.promptColorSchemeIds,
@@ -1090,6 +1122,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       providerId,
       imageCount,
       size,
+      resolutionTier,
       quality,
       promptInputOptimizeStyle: currentPromptInputOptimizeStyle,
       promptColorSchemeIds: currentPromptColorSchemeIds,
@@ -1253,6 +1286,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
             selectedAssets: pendingEditorReturn?.selectedAssets ?? selectedAssets,
             imageCount: pendingEditorReturn?.imageCount ?? imageCount,
             size: pendingEditorReturn?.size ?? size,
+            resolutionTier: pendingEditorReturn?.resolutionTier ?? resolutionTier,
             quality: pendingEditorReturn?.quality ?? quality,
             promptInputOptimizeStyle: pendingEditorReturn?.promptInputOptimizeStyle ?? currentPromptInputOptimizeStyle,
             promptColorSchemeIds: pendingEditorReturn?.promptColorSchemeIds ?? currentPromptColorSchemeIds,
@@ -1412,7 +1446,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   const submitDraft = () => {
     if (currentScopeBusy || !draftPrompt.trim()) return;
     const prompt = draftPrompt.trim();
-    const selectedRequestSize = requestSizeFromSelection(size);
+    const selectedRequestSize = requestSizeFromSelection(size, resolutionTier);
     const caseUsage = draftCaseUsage?.caseItemId ? draftCaseUsage : null;
     const latestAssistantImage = [...visibleBranchMessages]
       .reverse()
@@ -1531,7 +1565,6 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     setSelectedAssets([]);
     setSelectedCaseMaterials([]);
     setMaterialPickerOpen(false);
-    setSize("");
     resetPromptInputOptimizeStyle();
     resetPromptColorScheme();
     startTrackedSubmit({
@@ -1543,6 +1576,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       prompt,
       language: resolvedLanguage,
       size: selectedRequestSize,
+      resolutionTier,
       ...(quality ? { quality } : {}),
       n: imageCount,
       ...(requestCaseItemId ? { caseItemId: requestCaseItemId } : {}),
@@ -1556,6 +1590,34 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       ...branchFields
     }, submittedSnapshot);
   };
+
+  useEffect(() => {
+    const handleLiveAction = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string; prompt?: string; providerId?: string; size?: string; quality?: string; resolutionTier?: ImageResolutionTier; imageCount?: number }>).detail;
+      if (!detail || !["set_prompt", "demo_generate", "edit_latest_image", "inspect_state"].includes(String(detail.type))) return;
+      if (detail.type === "inspect_state") return;
+      if (detail.prompt) setDraftPrompt(detail.prompt, null);
+      if (detail.providerId) setProviderId(detail.providerId);
+      if (detail.size) setSize(detail.size);
+      if (detail.quality) setQuality(detail.quality);
+      if (detail.resolutionTier) setResolutionTier(detail.resolutionTier);
+      if (Number.isFinite(detail.imageCount)) setImageCount(Math.max(1, Math.min(4, Number(detail.imageCount))));
+      if (detail.type === "demo_generate" && detail.prompt) pendingLiveDemoSubmitRef.current = detail.prompt.trim();
+      if (detail.type === "edit_latest_image" && detail.prompt) pendingLiveEditRef.current = detail.prompt.trim();
+      if (window.parent !== window) window.parent.postMessage({ source: "lingtu-live-demo", type: "action_applied", action: detail.type, prompt: detail.prompt || "" }, "*");
+    };
+    window.addEventListener("lingtu-live-action", handleLiveAction);
+    return () => window.removeEventListener("lingtu-live-action", handleLiveAction);
+  }, [setDraftPrompt, setImageCount, setProviderId, setQuality, setResolutionTier, setSize]);
+
+  useEffect(() => {
+    const pendingPrompt = pendingLiveDemoSubmitRef.current;
+    if (!pendingPrompt || draftPrompt.trim() !== pendingPrompt || currentScopeBusy) return;
+    pendingLiveDemoSubmitRef.current = null;
+    if (window.parent !== window) window.parent.postMessage({ source: "lingtu-live-demo", type: "generation_submitting", prompt: pendingPrompt }, "*");
+    const timer = window.setTimeout(() => submitDraft(), 250);
+    return () => window.clearTimeout(timer);
+  }, [currentScopeBusy, draftPrompt, imageCount, providerId, quality, resolutionTier, size, submitDraft]);
 
   const serverMessages = messages.data?.messages ?? [];
   const serverRenderState = useMemo(() => buildChatRenderState(serverMessages, activeBranchId), [activeBranchId, serverMessages]);
@@ -1591,6 +1653,13 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
   const renderItems = renderState.items;
   const activeChatBranchId = renderState.activeBranchId;
   const visibleBranchMessages = renderState.visibleMessages;
+  const visiblePendingImagePreview = Boolean(
+    visibleRunningImageJob
+    && visibleBranchMessages.some((message) => (
+      message.metadata?.pendingImage === true
+      && message.metadata?.jobId === visibleRunningImageJob.id
+    ))
+  );
   const latestVisibleFailedJob = useMemo(() => {
     const visibleJobs = imageJobs.filter((job) => (job.branchId?.trim() || MAIN_CHAT_BRANCH_ID) === activeChatBranchId);
     for (let index = visibleJobs.length - 1; index >= 0; index -= 1) {
@@ -1770,6 +1839,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       providerId,
       imageCount,
       size,
+      resolutionTier,
       quality,
       promptInputOptimizeStyle: currentPromptInputOptimizeStyle,
       promptColorSchemeIds: currentPromptColorSchemeIds,
@@ -1788,6 +1858,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         providerId: savedSettings.providerId,
         imageCount: savedSettings.imageCount,
         size: savedSettings.size,
+        resolutionTier: savedSettings.resolutionTier,
         quality: savedSettings.quality,
         promptInputOptimizeStyle: normalizePromptOptimizeStyle(savedSettings.promptInputOptimizeStyle, promptOptimizeStyleGroups),
         promptColorSchemeIds: savedSettings.promptColorSchemeIds,
@@ -1806,6 +1877,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     setProviderId(nextDraft.providerId);
     setImageCount(nextDraft.imageCount);
     setSize(nextDraft.size);
+    setResolutionTier(nextDraft.resolutionTier ?? "1K");
     setQuality(nextDraft.quality);
     handlePromptOptimizerModelChange(savedSettings?.promptOptimizerModel || window.localStorage.getItem("gpt-image.prompt-optimizer-model") || "system");
     setMaterialPickerOpen(false);
@@ -1835,6 +1907,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       providerId,
       imageCount,
       size,
+      resolutionTier,
       quality,
       promptInputOptimizeStyle: currentPromptInputOptimizeStyle,
       promptColorSchemeIds: currentPromptColorSchemeIds,
@@ -1850,6 +1923,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         providerId,
         imageCount,
         size,
+        resolutionTier,
         quality,
         promptOptimizerModel: promptOptimizerModelValue,
         promptInputOptimizeStyle: currentPromptInputOptimizeStyle,
@@ -1877,6 +1951,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     providerId,
     promptOptimizerModelValue,
     quality,
+    resolutionTier,
     selectedAssets,
     selectedCaseMaterials,
     size,
@@ -1912,7 +1987,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     const trimmedPrompt = prompt.trim();
     if (currentScopeBusy || !trimmedPrompt) return;
     const effectiveSize = requestSize ?? size;
-    const selectedRequestSize = requestSizeFromSelection(effectiveSize);
+    const selectedRequestSize = requestSizeFromSelection(effectiveSize, resolutionTier);
     const sourceAssetIdSet = new Set(sourceAssetIds);
     const sourceCaseItemIdSet = new Set(sourceCaseItemIds);
     const selectedCaseReferences = selectedCaseMaterials.filter((item) => sourceCaseItemIdSet.has(item.caseItemId)).map(sourceReferenceFromCaseMaterial);
@@ -1948,6 +2023,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       selectedAssets: submittedSnapshot.selectedAssets,
       imageCount: submittedSnapshot.imageCount,
       size: submittedSnapshot.size,
+      resolutionTier: submittedSnapshot.resolutionTier,
       quality: submittedSnapshot.quality,
       promptInputOptimizeStyle: submittedSnapshot.promptInputOptimizeStyle,
       promptColorSchemeIds: submittedSnapshot.promptColorSchemeIds,
@@ -2006,7 +2082,6 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     setSelectedAssets([]);
     setSelectedCaseMaterials([]);
     setMaterialPickerOpen(false);
-    setSize("");
     resetPromptInputOptimizeStyle();
     resetPromptColorScheme();
     startTrackedSubmit({
@@ -2018,6 +2093,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       prompt: trimmedPrompt,
       language: resolvedLanguage,
       size: selectedRequestSize,
+      resolutionTier,
       ...(quality ? { quality } : {}),
       n: imageCount,
       sourceImageIds: [image.id],
@@ -2027,6 +2103,39 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       ...branchFields
     }, submittedSnapshot);
   };
+  useEffect(() => {
+    const prompt = pendingLiveEditRef.current;
+    if (!prompt || currentScopeBusy) return;
+    const latest = [...visibleBranchMessages].reverse().find((message) => message.role === "assistant" && message.imageUrl && message.imageId);
+    if (!latest) return;
+    pendingLiveEditRef.current = null;
+    const image = workImageFromMessage(latest);
+    if (image) sendEditRequest(image, prompt);
+  }, [currentScopeBusy, visibleBranchMessages]);
+
+  useEffect(() => {
+    if (window.parent === window || new URLSearchParams(window.location.search).get("live_demo") !== "1") return;
+    const latest = [...visibleBranchMessages].reverse().find((message) => message.role === "assistant" && message.imageUrl && message.imageId);
+    const currentJob = currentRunningJob ?? imageJobs[0] ?? null;
+    window.parent.postMessage({
+      source: "lingtu-live-demo",
+      type: "platform_state",
+      page: window.location.pathname,
+      loggedIn: true,
+      prompt: draftPrompt,
+      busy: currentScopeBusy,
+      job: currentJob ? {
+        id: currentJob.id,
+        status: currentJob.status,
+        type: currentJob.type,
+        completed: currentJob.completedImageCount ?? 0,
+        expected: currentJob.requestedImageCount ?? imageCount,
+        phase: currentJob.phase ?? "generating"
+      } : null,
+      latestImage: latest ? { id: latest.imageId, url: latest.imagePreviewUrl || latest.imageUrl, kind: latest.imageKind || "generation" } : null,
+      at: Date.now()
+    }, "*");
+  }, [currentRunningJob, currentScopeBusy, draftPrompt, imageCount, imageJobs, visibleBranchMessages]);
   const sendAspectRatioEdit = (image: WorkImage, option: SizeOption) => {
     sendEditRequest(image, `将宽高比设为 ${option.ratio}`, undefined, option.value);
   };
@@ -2048,7 +2157,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       sourceSnapshot.sourceReferenceIds.length > 0
         ? "edit"
         : "generation";
-    const selectedRequestSize = requestSizeFromSelection(size);
+    const selectedRequestSize = requestSizeFromSelection(size, resolutionTier);
     const hideReference = sourceSnapshot.hideReference && sourceSnapshot.references.length === 0;
     const primaryReference = sourceSnapshot.primaryImageReference;
     const firstMaterialReference = sourceSnapshot.materialReferences[0] ?? null;
@@ -2163,7 +2272,6 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         ...referenceFields
       }
     });
-    setSize("");
     startTrackedSubmit({
       clientRequestId,
       pendingScope,
@@ -2173,6 +2281,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       prompt: trimmedPrompt,
       language: resolvedLanguage,
       size: selectedRequestSize,
+      resolutionTier,
       ...(quality ? { quality } : {}),
       n: imageCount,
       sourceImageIds: sourceSnapshot.sourceImageIds,
@@ -2213,6 +2322,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       previewUrl: asset.previewUrl ?? asset.originalUrl ?? asset.url,
       name: asset.name,
       title: asset.name,
+      status: asset.processingState === "reading" ? "正在读取" : asset.processingState === "uploading" ? "后台保存" : undefined,
       onRemove: () => setSelectedAssets(selectedAssets.filter((item) => item.id !== asset.id))
     }))
   ];
@@ -2375,7 +2485,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
             })
           }
         />
-        {visibleLoadingMode ? (
+        {visibleLoadingMode && !visiblePendingImagePreview && visibleRunningImageJob?.phase !== "persisting" ? (
           <div ref={loadingMessageRef} className="message-enter-row loading-message-anchor" style={messageRevealStyle(renderItems.length)}>
             <RenderingMessage mode={visibleLoadingMode} completedImageCount={visibleRunningImageJob?.completedImageCount} requestedImageCount={visibleRunningImageJob?.requestedImageCount} phase={visibleRunningImageJob?.phase} />
           </div>
@@ -2477,6 +2587,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
       />
       <ChatComposer
         key={composerInstanceKey}
+        attachmentPreparing={selectedAssets.some((asset) => asset.processingState === "reading")}
         autoOptimizePromptRequest={sessionId ? null : starterPromptOptimizeRequest}
         busy={currentScopeBusy || cancelPending}
         cancelPending={cancelPending}
@@ -2504,6 +2615,9 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         promptTemplateDraft={currentPromptTemplateDraft}
         quality={quality}
         qualityOptions={qualityOptions}
+        resolutionTier={resolutionTier}
+        availableResolutionTiers={availableResolutionTiers}
+        actualOutputSize={actualOutputSize}
         selectedAssets={selectedAssets}
         selectedCaseMaterials={selectedCaseMaterials}
         size={size}
@@ -2517,6 +2631,10 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         onImageModelChange={setProviderId}
         onPaste={handleComposerPaste}
         onQualityChange={setQuality}
+        onResolutionTierChange={(value) => {
+          setResolutionTier(value);
+          if (!size && sizeOptions[0]) setSize(sizeOptions[0].value);
+        }}
         onSelectedAssetsChange={setSelectedAssets}
         onSelectedCaseMaterialsChange={setSelectedCaseMaterials}
         onSizeChange={setSize}

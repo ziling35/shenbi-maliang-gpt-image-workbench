@@ -11,7 +11,8 @@ export type ImageJobEventPayload = {
   error?: string | null;
   completedImageCount?: number;
   requestedImageCount?: number;
-  phase?: "generating" | "supplementing";
+  phase?: "generating" | "persisting" | "supplementing";
+  imageMessage?: Record<string, unknown>;
   updatedAt: string;
 };
 

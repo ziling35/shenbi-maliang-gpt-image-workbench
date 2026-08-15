@@ -1,4 +1,4 @@
-import { Brush, Check, FolderOpen, Heart, Lightbulb } from "lucide-react";
+import { Brush, Check, FolderOpen, Heart, Lightbulb, MessageSquareText, Send } from "lucide-react";
 import { useI18n } from "../i18n";
 import { cx } from "../lib/cx";
 import type { WorkImage } from "../types";
@@ -19,6 +19,8 @@ export function MyImageCard({
   onOpenEditor,
   onAddCase,
   onAddAsset,
+  onUseAsMaterial,
+  onShowPrompt,
   onDelete,
   onToggleFavorite,
   onToggleSelected
@@ -36,6 +38,8 @@ export function MyImageCard({
   onOpenEditor: (image: WorkImage) => void;
   onAddCase: (image: WorkImage) => void;
   onAddAsset: (image: WorkImage) => void;
+  onUseAsMaterial: (image: WorkImage) => void;
+  onShowPrompt: (image: WorkImage) => void;
   onDelete: (image: WorkImage) => void;
   onToggleFavorite: (image: WorkImage) => void;
   onToggleSelected?: (image: WorkImage) => void;
@@ -90,6 +94,12 @@ export function MyImageCard({
             title={t("pages.cases.addToInspiration")}
           >
             <Lightbulb size={16} />
+          </button>
+          <button className="case-action-icon" type="button" onClick={() => onUseAsMaterial(image)} aria-label={t("pages.images.useAsMaterial")} title={t("pages.images.useAsMaterial")}>
+            <Send size={16} />
+          </button>
+          <button className="case-action-icon" type="button" onClick={() => onShowPrompt(image)} aria-label={t("pages.images.viewPrompt")} title={t("pages.images.viewPrompt")}>
+            <MessageSquareText size={16} />
           </button>
           <button
             className="case-action-icon"

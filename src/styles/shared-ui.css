@@ -2713,3 +2713,22 @@ textarea:focus {
 .image-zoom-slider:has(input:disabled) {
   opacity: 0.55;
 }
+
+.prompt-viewer-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.prompt-viewer-dialog pre {
+  max-height: min(52vh, 520px);
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 14px;
+  padding: 16px;
+  color: var(--app-text, #1f2937);
+  background: var(--app-surface-soft, #f8fafc);
+  font: inherit;
+  line-height: 1.65;
+}

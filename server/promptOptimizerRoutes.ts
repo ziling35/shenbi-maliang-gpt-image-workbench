@@ -77,8 +77,24 @@ function retryablePromptOptimizerStatus(status: number) {
   return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
 }
 
-function promptOptimizerRetryDelay(attempt: number) {
-  return new Promise((resolve) => setTimeout(resolve, Math.min(2000, 350 * (attempt + 1))));
+function retryAfterDelayMs(response?: Response) {
+  const value = response?.headers.get("retry-after")?.trim();
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(30_000, Math.max(250, Math.round(seconds * 1000)));
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return 0;
+  return Math.min(30_000, Math.max(250, timestamp - Date.now()));
+}
+
+export function promptOptimizerRetryDelayMs(attempt: number, response?: Response) {
+  const retryAfter = retryAfterDelayMs(response);
+  if (retryAfter > 0) return retryAfter;
+  return Math.min(15_000, 1500 * (2 ** Math.max(0, Math.trunc(attempt))));
+}
+
+function promptOptimizerRetryDelay(attempt: number, response?: Response) {
+  return new Promise((resolve) => setTimeout(resolve, promptOptimizerRetryDelayMs(attempt, response)));
 }
 
 export async function fetchPromptOptimizerWithRetry(
@@ -94,7 +110,7 @@ export async function fetchPromptOptimizerWithRetry(
     try {
       const response = await fetch(input, init);
       if (response.ok || !retryablePromptOptimizerStatus(response.status) || attempt >= retryCount) return response;
-      await promptOptimizerRetryDelay(attempt);
+      await promptOptimizerRetryDelay(attempt, response);
     } catch (error) {
       lastError = error;
       if (init.signal?.aborted || attempt >= retryCount) throw error;

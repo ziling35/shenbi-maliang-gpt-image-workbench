@@ -1,8 +1,7 @@
 import path from "node:path";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import sharp from "sharp";
 import { SAFE_IMAGE_MAX_PIXELS } from "./imageValidation";
-import { absoluteDataPath, IMAGE_MASK_DIR } from "./paths";
+import { readStoredFile, writeEncryptedFile } from "./secureFiles";
 
 function dataUrlToBuffer(dataUrl: string) {
   const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/);
@@ -64,11 +63,10 @@ export async function saveImageEditMaskSnapshot(jobId: string, dataUrl: string) 
   const { mimeType, buffer } = dataUrlToBuffer(dataUrl);
   const extension = maskExtension(mimeType);
   const fileName = `${jobId}.${extension}`;
-  const absolutePath = path.join(IMAGE_MASK_DIR, fileName);
-  await mkdir(IMAGE_MASK_DIR, { recursive: true });
-  await writeFile(absolutePath, buffer);
+  const relativePath = `files/image-masks/${fileName}`;
+  await writeEncryptedFile(relativePath, buffer);
   return {
-    path: `files/image-masks/${fileName}`,
+    path: relativePath,
     mimeType
   };
 }
@@ -76,7 +74,6 @@ export async function saveImageEditMaskSnapshot(jobId: string, dataUrl: string) 
 export async function imageEditMaskSnapshotDataUrl(relativePath: string) {
   const cleanPath = relativePath.trim().replace(/^\/+/, "");
   if (!cleanPath || cleanPath.includes("..")) return "";
-  const absolutePath = absoluteDataPath(cleanPath);
-  const buffer = await readFile(absolutePath);
+  const buffer = await readStoredFile(cleanPath);
   return `data:${maskMimeTypeFromPath(cleanPath)};base64,${buffer.toString("base64")}`;
 }

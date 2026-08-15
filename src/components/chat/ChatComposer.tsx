@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { ArrowUp, BrushCleaning, ImageIcon, Lightbulb, LoaderCircle, Plus, RotateCw, Sparkles, Square, Undo2, WandSparkles, X } from "lucide-react";
 import { ImageLightbox, type ImageLightboxState } from "../ImageLightbox";
 import { MaterialPickerDrawer } from "../MaterialPicker";
-import { ImageCountStepper, QualityPicker, SizePicker } from "../ImageOptionPickers";
+import { ImageCountStepper, QualityPicker, ResolutionPicker, SizePicker } from "../ImageOptionPickers";
 import { CheckerboardImage } from "../CheckerboardImage";
 import { PromptColorSchemeSelect } from "../PromptColorSchemeSelect";
 import { PromptOptimizeStyleSelect } from "../PromptOptimizeStyleSelect";
@@ -25,7 +25,7 @@ import {
   type PromptOptimizeStyleGroup
 } from "../../lib/promptOptimizeStyles";
 import { useI18n } from "../../i18n";
-import type { QualityOption, SizeOption } from "../../lib/imageOptions";
+import type { ImageResolutionTier, QualityOption, SizeOption } from "../../lib/imageOptions";
 import type { ComposerPromptTemplateDraft, ComposerPromptTemplatePanelDraft } from "../../store/workbench";
 import type { AssetItem, CaseMaterialItem, ImageEditSuggestion } from "../../types";
 import { useToast } from "../../ui";
@@ -41,10 +41,12 @@ export type ChatComposerPreview = {
   previewUrl?: string;
   name: string;
   title: string;
+  status?: string;
   onRemove: () => void;
 };
 
 type ChatComposerProps = {
+  attachmentPreparing?: boolean;
   autoOptimizePromptRequest?: { id: number; prompt: string } | null;
   assets?: { assets: AssetItem[] };
   busy: boolean;
@@ -61,6 +63,8 @@ type ChatComposerProps = {
   imageModelOptions: ModelPickerOption[];
   imageModelValue: string;
   estimatedCostLabel?: string;
+  actualOutputSize?: string;
+  availableResolutionTiers: ImageResolutionTier[];
   promptOptimizerModels?: PromptOptimizerModelCatalog;
   promptOptimizerModelValue: string;
   promptColorSchemes: PromptColorScheme[];
@@ -72,6 +76,7 @@ type ChatComposerProps = {
   promptTemplateDraft?: ComposerPromptTemplateDraft | null;
   quality: string;
   qualityOptions: QualityOption[];
+  resolutionTier: ImageResolutionTier;
   selectedAssets: AssetItem[];
   selectedCaseMaterials: CaseMaterialItem[];
   size: string;
@@ -85,6 +90,7 @@ type ChatComposerProps = {
   onImageModelChange: (value: string) => void;
   onPaste: ClipboardEventHandler<HTMLTextAreaElement>;
   onQualityChange: (value: string) => void;
+  onResolutionTierChange: (value: ImageResolutionTier) => void;
   onSelectedAssetsChange: (assets: AssetItem[]) => void;
   onSelectedCaseMaterialsChange: (caseMaterials: CaseMaterialItem[]) => void;
   onSizeChange: (value: string) => void;
@@ -141,6 +147,7 @@ function measureTextareaCaret(textarea: HTMLTextAreaElement, value: string, posi
 }
 
 export function ChatComposer({
+  attachmentPreparing = false,
   autoOptimizePromptRequest,
   assets,
   busy,
@@ -157,6 +164,8 @@ export function ChatComposer({
   imageModelOptions,
   imageModelValue,
   estimatedCostLabel,
+  actualOutputSize,
+  availableResolutionTiers,
   promptOptimizerModels,
   promptOptimizerModelValue,
   promptColorSchemes,
@@ -168,6 +177,7 @@ export function ChatComposer({
   promptTemplateDraft,
   quality,
   qualityOptions,
+  resolutionTier,
   selectedAssets,
   selectedCaseMaterials,
   size,
@@ -181,6 +191,7 @@ export function ChatComposer({
   onImageModelChange,
   onPaste,
   onQualityChange,
+  onResolutionTierChange,
   onSelectedAssetsChange,
   onSelectedCaseMaterialsChange,
   onSizeChange,
@@ -748,6 +759,7 @@ export function ChatComposer({
   }
 
   function submitPrompt() {
+    if (attachmentPreparing) return;
     const shouldClearUndo = Boolean(draftPrompt.trim()) && !busy && !promptOptimizationLoading;
     onSubmit();
     if (shouldClearUndo) {
@@ -826,6 +838,7 @@ export function ChatComposer({
                 >
                   <CheckerboardImage src={preview.url} alt={preview.name} />
                 </button>
+                {preview.status ? <span className="composer-preview-status"><LoaderCircle size={13} className="spin" />{preview.status}</span> : null}
                 <button type="button" className="composer-preview-remove" onClick={preview.onRemove} aria-label={t("composer.removeNamed", { name: preview.name })}>
                   <X size={15} />
                 </button>
@@ -900,7 +913,8 @@ export function ChatComposer({
               ) : null}
             </div>
             <ModelPicker value={imageModelValue} options={imageModelOptions} onChange={onImageModelChange} kind="image" />
-            <SizePicker value={size} options={sizeOptions} onChange={onSizeChange} />
+            <SizePicker value={size} options={sizeOptions} resolutionTier={resolutionTier} onChange={onSizeChange} />
+            <ResolutionPicker value={resolutionTier} supportedValues={availableResolutionTiers} actualOutputSize={actualOutputSize} onChange={onResolutionTierChange} />
             <QualityPicker value={quality} options={qualityOptions} onChange={onQualityChange} />
             <ImageCountStepper value={imageCount} onChange={onImageCountChange} />
             <span className="composer-action-spacer" />
@@ -918,7 +932,7 @@ export function ChatComposer({
             ) : (
               <button
                 className="send-btn"
-                disabled={promptOptimizationLoading || !draftPrompt.trim()}
+                disabled={attachmentPreparing || promptOptimizationLoading || !draftPrompt.trim()}
                 aria-label={t("composer.send")}
                 data-tooltip={t("composer.send")}
               >
@@ -1010,6 +1024,7 @@ export function ChatComposer({
               ) : null}
             </span>
             <span className="composer-action-spacer" />
+            {actualOutputSize ? <span className="composer-output-size">预计输出 {actualOutputSize.replace("x", "×")}</span> : null}
             {estimatedCostLabel ? <span className="composer-estimated-cost">{estimatedCostLabel}</span> : null}
           </div>
         </div>

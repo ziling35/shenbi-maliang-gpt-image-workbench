@@ -17,17 +17,19 @@ function billingFixture(balanceCents = 1_000) {
   const userId = `billing_test_user_${suffix}`;
   const jobId = `billing_test_job_${suffix}`;
   const model = `billing-test-model-${suffix}`;
+  const providerId = `billing-test-provider-${suffix}`;
   const textModel = `billing-test-text-model-${suffix}`;
   const timestamp = new Date().toISOString();
   appDb.query(`insert into users(id,team_id,account,username,email,phone,password_hash,balance_cents,created_at,updated_at)
     values(?,null,?,?,?,?,?,?,?,?)`).run(userId, userId, userId, "", "", "test", balanceCents, timestamp, timestamp);
-  configDb.query("insert into billing_model_prices(model,price_cents,enabled,updated_at) values(?,125,1,?)").run(model, timestamp);
+  configDb.query("insert into billing_model_prices(provider_id,model,price_cents,enabled,updated_at) values('',?,125,1,?)").run(model, timestamp);
   appDb.query(`insert into image_jobs(id,user_id,type,status,prompt,provider_id,created_at,updated_at)
     values(?,?,'generation','running','test','test',?,?)`).run(jobId, userId, timestamp, timestamp);
   return {
     userId,
     jobId,
     model,
+    providerId,
     textModel,
     cleanup() {
       appDb.query("delete from billing_ledger where user_id=?").run(userId);
@@ -50,7 +52,7 @@ describe("billing", () => {
   test("reserves balance and refunds a failed job exactly once", () => {
     const fixture = billingFixture();
     try {
-      expect(reserveImageCharge(fixture.userId, fixture.jobId, fixture.model, 2)).toBe(250);
+      expect(reserveImageCharge(fixture.userId, fixture.jobId, fixture.providerId, fixture.model, 2)).toBe(250);
       expect(appDb.query("select balance_cents from users where id=?").get(fixture.userId)).toEqual({ balance_cents: 750 });
       appDb.query("update image_jobs set status='failed' where id=?").run(fixture.jobId);
       appDb.query("update image_jobs set status='failed' where id=?").run(fixture.jobId);
@@ -65,7 +67,7 @@ describe("billing", () => {
   test("rejects insufficient balance without creating a reservation", () => {
     const fixture = billingFixture(100);
     try {
-      expect(() => reserveImageCharge(fixture.userId, fixture.jobId, fixture.model, 1)).toThrow("余额不足");
+      expect(() => reserveImageCharge(fixture.userId, fixture.jobId, fixture.providerId, fixture.model, 1)).toThrow("余额不足");
       expect(appDb.query("select balance_cents from users where id=?").get(fixture.userId)).toEqual({ balance_cents: 100 });
       expect(appDb.query("select job_id from billing_reservations where job_id=?").get(fixture.jobId)).toBeNull();
     } finally {
@@ -76,12 +78,37 @@ describe("billing", () => {
   test("refunds missing images and captures only the delivered count", () => {
     const fixture = billingFixture();
     try {
-      expect(reserveImageCharge(fixture.userId, fixture.jobId, fixture.model, 4)).toBe(500);
+      expect(reserveImageCharge(fixture.userId, fixture.jobId, fixture.providerId, fixture.model, 4)).toBe(500);
       expect(settlePartialImageCharge(fixture.jobId, 2)).toBe(250);
       appDb.query("update image_jobs set status='succeeded' where id=?").run(fixture.jobId);
       expect(appDb.query("select balance_cents from users where id=?").get(fixture.userId)).toEqual({ balance_cents: 750 });
       expect(appDb.query("select image_count,amount_cents,status from billing_reservations where job_id=?").get(fixture.jobId)).toEqual({ image_count: 2, amount_cents: 250, status: "captured" });
       expect(appDb.query("select amount_cents from billing_ledger where reference_id=?").get(`${fixture.jobId}:partial`)).toEqual({ amount_cents: 250 });
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test("prefers a channel-specific price over the general model price", () => {
+    const fixture = billingFixture();
+    try {
+      configDb.query("insert into billing_model_prices(provider_id,model,price_cents,enabled,updated_at) values(?,?,275,1,?)")
+        .run(fixture.providerId, fixture.model, new Date().toISOString());
+      expect(reserveImageCharge(fixture.userId, fixture.jobId, fixture.providerId, fixture.model, 2)).toBe(550);
+      expect(appDb.query("select provider_id,amount_cents from billing_reservations where job_id=?").get(fixture.jobId))
+        .toEqual({ provider_id: fixture.providerId, amount_cents: 550 });
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test("does not fall back when a channel-specific price is disabled", () => {
+    const fixture = billingFixture();
+    try {
+      configDb.query("insert into billing_model_prices(provider_id,model,price_cents,enabled,updated_at) values(?,?,275,0,?)")
+        .run(fixture.providerId, fixture.model, new Date().toISOString());
+      expect(() => reserveImageCharge(fixture.userId, fixture.jobId, fixture.providerId, fixture.model, 1)).toThrow("尚未配置可用价格");
+      expect(appDb.query("select balance_cents from users where id=?").get(fixture.userId)).toEqual({ balance_cents: 1_000 });
     } finally {
       fixture.cleanup();
     }

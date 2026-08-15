@@ -73,11 +73,16 @@ function resolveChatMessageCapabilities(
 }
 
 function messagePreviewUrl(message: Message) {
-  return message.imagePreviewUrl ?? message.imageUrl ?? "";
+  return message.imageOriginalUrl ?? message.imageUrl ?? "";
 }
 
 function messageThumbnailUrl(message: Message) {
   return message.imageThumbnailUrl ?? message.imagePreviewUrl ?? message.imageUrl ?? "";
+}
+
+function pendingImageFallbackUrl(message: Message) {
+  const value = message.metadata?.pendingFallbackUrl;
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function referencePreviewUrl(message: Message) {
@@ -299,6 +304,136 @@ async function convertImageBlobToPng(blob: Blob) {
       reject(new Error("Image conversion failed"));
     }, "image/png");
   });
+}
+
+function imageAspectRatio(message: Message) {
+  const width = Number(message.imageWidth || 0);
+  const height = Number(message.imageHeight || 0);
+  if (width > 0 && height > 0) return `${width} / ${height}`;
+  const parsedSize = parseImageSize(message.imageSize);
+  if (parsedSize) return `${parsedSize.width} / ${parsedSize.height}`;
+  const ratio = message.imageSize?.match(/^\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*$/);
+  if (ratio) return `${ratio[1]} / ${ratio[2]}`;
+  return "1 / 1";
+}
+
+function ProgressiveMessageImage({
+  message,
+  thumbnail = false,
+  alt,
+  onLoad
+}: {
+  message: Message;
+  thumbnail?: boolean;
+  alt: string;
+  onLoad?: () => void;
+}) {
+  const { t } = useI18n();
+  const primaryUrl = thumbnail ? messageThumbnailUrl(message) : messagePreviewUrl(message);
+  const fallbackUrl = pendingImageFallbackUrl(message);
+  const pending = message.metadata?.pendingImage === true;
+  const [sourceUrl, setSourceUrl] = useState(primaryUrl);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setSourceUrl(primaryUrl);
+    setLoaded(false);
+    setFailed(false);
+  }, [primaryUrl, fallbackUrl]);
+
+  return (
+    <span
+      className={cx(
+        "message-image-load-frame",
+        thumbnail && "is-thumbnail",
+        pending && "is-pending",
+        loaded && "is-loaded",
+        failed && "is-failed"
+      )}
+      style={thumbnail ? undefined : { aspectRatio: imageAspectRatio(message) }}
+    >
+      {!loaded && !thumbnail ? (
+        <span className="message-image-load-status" aria-live="polite">
+          <RefreshCw size={18} className="spin" />
+          <strong>{pending ? t("chatMessages.upstreamImageReady") : t("chatMessages.loadingImage")}</strong>
+          <small>{pending ? t("chatMessages.loadingOriginalImage") : t("chatMessages.loadingImageHint")}</small>
+        </span>
+      ) : null}
+      {!loaded && thumbnail ? <RefreshCw size={15} className="message-image-thumb-spinner spin" aria-hidden="true" /> : null}
+      <img
+        src={sourceUrl}
+        alt={alt}
+        loading="eager"
+        decoding="async"
+        onLoad={() => {
+          setLoaded(true);
+          setFailed(false);
+          onLoad?.();
+        }}
+        onError={() => {
+          if (fallbackUrl && sourceUrl !== fallbackUrl) {
+            setSourceUrl(fallbackUrl);
+            return;
+          }
+          setFailed(true);
+        }}
+      />
+    </span>
+  );
+}
+
+function proxiedImageUrl(imageUrl: string) {
+  const copyUrl = new URL(imageUrl, window.location.href);
+  if (copyUrl.origin === window.location.origin) copyUrl.searchParams.set("proxy", "1");
+  return copyUrl;
+}
+
+async function clipboardPngBlob(imageUrl: string) {
+  const response = await fetch(proxiedImageUrl(imageUrl), { credentials: "include", cache: "force-cache" });
+  if (!response.ok) throw new Error("Image read failed");
+  const sourceBlob = await response.blob();
+  return sourceBlob.type === "image/png" ? sourceBlob : convertImageBlobToPng(sourceBlob);
+}
+
+async function legacyCopyImageBlob(blob: Blob) {
+  if (typeof document.execCommand !== "function") return false;
+  const objectUrl = URL.createObjectURL(blob);
+  const container = document.createElement("div");
+  const image = document.createElement("img");
+  container.contentEditable = "true";
+  container.style.position = "fixed";
+  container.style.left = "-10000px";
+  container.style.top = "0";
+  image.src = objectUrl;
+  container.appendChild(image);
+  document.body.appendChild(container);
+  try {
+    await image.decode().catch(() => undefined);
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNode(image);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return document.execCommand("copy");
+  } finally {
+    window.getSelection()?.removeAllRanges();
+    container.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function copyImageUrlToClipboard(imageUrl: string) {
+  const pngBlob = clipboardPngBlob(imageUrl);
+  if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+      return true;
+    } catch {
+      // Fall through to the legacy rich-image clipboard path for LAN HTTP environments.
+    }
+  }
+  return legacyCopyImageBlob(await pngBlob);
 }
 
 export function ChatMessageThread({
@@ -649,21 +784,17 @@ function AssistantImageGroup({
 
   const copyImage = async () => {
     if (!activeMessage.imageUrl || copyingImage) return;
-    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
-      const copiedUrl = await copyTextToClipboard(activeMessage.imageUrl);
-      showToast(copiedUrl ? t("toast.imageCopyUnsupportedUrlCopied") : t("toast.imageCopyUnsupported"), copiedUrl ? "info" : "error");
-      return;
-    }
+    const imageUrl = activeMessage.imageOriginalUrl ?? activeMessage.imageUrl;
     setCopyingImage(true);
     try {
-      const response = await fetch(activeMessage.imageUrl);
-      if (!response.ok) throw new Error(t("toast.imageReadFailed"));
-      const sourceBlob = await response.blob();
-      const imageBlob = sourceBlob.type === "image/png" ? sourceBlob : await convertImageBlobToPng(sourceBlob);
-      await navigator.clipboard.write([new ClipboardItem({ [imageBlob.type || "image/png"]: imageBlob })]);
-      showToast(t("toast.imageCopied"));
+      if (await copyImageUrlToClipboard(imageUrl)) {
+        showToast(t("toast.imageCopied"));
+        return;
+      }
+      const copiedUrl = await copyTextToClipboard(imageUrl);
+      showToast(copiedUrl ? t("toast.imageCopyUnsupportedUrlCopied") : t("toast.imageCopyUnsupported"), copiedUrl ? "info" : "error");
     } catch {
-      const copiedUrl = await copyTextToClipboard(activeMessage.imageUrl);
+      const copiedUrl = await copyTextToClipboard(imageUrl);
       showToast(copiedUrl ? t("toast.imageCopyFailedUrlCopied") : t("toast.imageCopyFailed"), copiedUrl ? "info" : "error");
     } finally {
       setCopyingImage(false);
@@ -684,7 +815,7 @@ function AssistantImageGroup({
                 aria-label={t("chatMessages.viewNthImage", { index: index + 1 })}
                 aria-pressed={index === currentIndex}
               >
-                <img src={messageThumbnailUrl(message)} alt="" loading="eager" decoding="async" />
+                <ProgressiveMessageImage message={message} thumbnail alt="" />
                 <span className="image-result-thumb-index">{index + 1}</span>
               </button>
             ))}
@@ -706,7 +837,7 @@ function AssistantImageGroup({
             }}
             aria-label={canOpenEditor ? t("pages.images.editImage") : t("imageLightbox.preview")}
           >
-            <img src={messagePreviewUrl(activeMessage)} alt={activeMessage.content} loading="eager" decoding="async" onLoad={updateThumbLayout} />
+            <ProgressiveMessageImage message={activeMessage} alt={activeMessage.content} onLoad={updateThumbLayout} />
           </button>
           <AssistantImageActions
             image={image}
@@ -722,7 +853,7 @@ function AssistantImageGroup({
         <div className="assistant-image-toolbar assistant-image-group-toolbar">
           {capabilities.copyImage ? (
             <button type="button" onClick={() => void copyImage()} disabled={copyingImage} aria-label={t("chatMessages.copyImage")} title={t("chatMessages.copyImage")}>
-              <Copy size={17} />
+              {copyingImage ? <RefreshCw size={17} className="spin" /> : <Copy size={17} />}
             </button>
           ) : null}
           <MessageMoreButton createdAt={activeMessage.createdAt} />
@@ -1019,21 +1150,17 @@ export function ChatMessage({
 
   const copyImage = async () => {
     if (!message.imageUrl || copyingImage) return;
-    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
-      const copiedUrl = await copyTextToClipboard(message.imageUrl);
-      showToast(copiedUrl ? t("toast.imageCopyUnsupportedUrlCopied") : t("toast.imageCopyUnsupported"), copiedUrl ? "info" : "error");
-      return;
-    }
+    const imageUrl = message.imageOriginalUrl ?? message.imageUrl;
     setCopyingImage(true);
     try {
-      const response = await fetch(message.imageUrl);
-      if (!response.ok) throw new Error(t("toast.imageReadFailed"));
-      const sourceBlob = await response.blob();
-      const imageBlob = sourceBlob.type === "image/png" ? sourceBlob : await convertImageBlobToPng(sourceBlob);
-      await navigator.clipboard.write([new ClipboardItem({ [imageBlob.type || "image/png"]: imageBlob })]);
-      showToast(t("toast.imageCopied"));
+      if (await copyImageUrlToClipboard(imageUrl)) {
+        showToast(t("toast.imageCopied"));
+        return;
+      }
+      const copiedUrl = await copyTextToClipboard(imageUrl);
+      showToast(copiedUrl ? t("toast.imageCopyUnsupportedUrlCopied") : t("toast.imageCopyUnsupported"), copiedUrl ? "info" : "error");
     } catch {
-      const copiedUrl = await copyTextToClipboard(message.imageUrl);
+      const copiedUrl = await copyTextToClipboard(imageUrl);
       showToast(copiedUrl ? t("toast.imageCopyFailedUrlCopied") : t("toast.imageCopyFailed"), copiedUrl ? "info" : "error");
     } finally {
       setCopyingImage(false);
@@ -1143,7 +1270,7 @@ export function ChatMessage({
               }}
               aria-label={canOpenEditor ? t("pages.images.editImage") : t("imageLightbox.preview")}
             >
-              <img src={messagePreviewUrl(message)} alt={message.content} />
+              <ProgressiveMessageImage message={message} alt={message.content} />
             </button>
             <AssistantImageActions
               image={image}
@@ -1159,7 +1286,7 @@ export function ChatMessage({
           <div className="assistant-image-toolbar">
             {capabilities.copyImage ? (
               <button type="button" onClick={() => void copyImage()} disabled={copyingImage} aria-label={t("chatMessages.copyImage")} title={t("chatMessages.copyImage")}>
-                <Copy size={17} />
+                {copyingImage ? <RefreshCw size={17} className="spin" /> : <Copy size={17} />}
               </button>
             ) : null}
             <MessageMoreButton createdAt={message.createdAt} />

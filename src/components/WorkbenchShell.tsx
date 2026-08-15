@@ -3,7 +3,7 @@ import type { CSSProperties, FocusEvent, FormEvent, MouseEvent, PointerEvent as 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InfiniteData } from "@tanstack/react-query";
 import { createPortal } from "react-dom";
-import { Camera, ChevronRight, CircleHelp, FolderOpen, Images, Lightbulb, LogOut, Menu, MessageCircle, MessageCirclePlus, PanelLeft, Pin, PinOff, RotateCcw, Search, Settings, ShieldCheck, Sparkles, WalletCards, X } from "lucide-react";
+import { Camera, ChevronRight, CircleHelp, Film, FolderOpen, Images, Lightbulb, LogOut, Menu, MessageCircle, MessageCirclePlus, PanelLeft, Pin, PinOff, RotateCcw, Search, Settings, ShieldCheck, Sparkles, WalletCards, X } from "lucide-react";
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { languagePreferenceLabel, useI18n, type LocaleCode, type Translate } from "../i18n";
@@ -15,11 +15,12 @@ import { AssetsPage } from "../pages/AssetsPage";
 import { CasesPage } from "../pages/CasesPage";
 import { ChatPage } from "../pages/ChatPage";
 import { ImagesPage } from "../pages/ImagesPage";
+import { VideosPage } from "../pages/VideosPage";
 import { InspirationBarragePage } from "../pages/InspirationBarragePage";
 import { PromptTemplateEditorPage, PromptTemplatesPage } from "../pages/PromptTemplatesPage";
 import { SharedConversationPage } from "../pages/SharedConversationPage";
 import { useWorkbench } from "../store/workbench";
-import type { AvatarHistoryEntry, ChatSession, ImageJob, User, UserPreferences } from "../types";
+import type { AvatarHistoryEntry, ChatSession, ImageJob, Message, User, UserPreferences } from "../types";
 import { ConfirmDialog, useToast } from "../ui";
 import { useInfinitePageLoader } from "../hooks/useInfinitePageLoader";
 import { useImageJobEvents, type ImageJobEventPayload } from "../hooks/useImageJobEvents";
@@ -92,7 +93,7 @@ function mergeAbortSignals(...signals: AbortSignal[]) {
   return controller.signal;
 }
 
-const SIDEBAR_MAIN_NAV_PATHS = ["/cases", "/assets", "/images", "/prompt-templates"];
+const SIDEBAR_MAIN_NAV_PATHS = ["/cases", "/assets", "/images", "/videos", "/prompt-templates"];
 const SIDEBAR_MAIN_NAV_PATH_SET = new Set<string>(SIDEBAR_MAIN_NAV_PATHS);
 const SESSION_GROUP_COLLAPSE_STORAGE_KEY = "gpt-image.sidebar.session-groups.collapsed";
 const IMAGE_EDIT_SUGGESTIONS_STALE_MS = 5 * 60 * 1000;
@@ -1222,6 +1223,13 @@ export function WorkbenchShell({ user }: { user: User }) {
       ]);
       return;
     }
+    if (path === "/videos") {
+      await Promise.all([
+        queryClient.prefetchQuery({ queryKey: ["video-providers"], queryFn: api.videoProviders, staleTime: 30_000 }),
+        queryClient.prefetchQuery({ queryKey: ["videos"], queryFn: api.videos, staleTime: 3_000 })
+      ]);
+      return;
+    }
     if (path === "/prompt-templates") {
       await queryClient.prefetchQuery({
         queryKey: ["prompt-templates", "all", ""],
@@ -1433,15 +1441,49 @@ export function WorkbenchShell({ user }: { user: User }) {
     } else {
       clearSessionGenerationStatus(sessionId);
     }
-    refreshSessionsNonCancel();
+    if (payload.status !== "running") refreshSessionsNonCancel();
     const updatedJobCache = updateSessionImageJobFromEvent(payload);
     if (!updatedJobCache) {
       queryClient.invalidateQueries({ queryKey: ["session-image-jobs", sessionId] });
     }
-    if (payload.status !== "running" || payload.resultImageId) {
-      queryClient.invalidateQueries({ queryKey: ["messages", sessionId] });
-      queryClient.invalidateQueries({ queryKey: ["images"] });
+    let appendedImageMessage = false;
+    if (payload.imageMessage) {
+      queryClient.setQueryData<{ messages: Message[] }>(["messages", sessionId], (current) => {
+        if (!current) return current;
+        const imageMessage = payload.imageMessage!;
+        const pendingPreviewId = typeof imageMessage.metadata?.pendingPreviewId === "string"
+          ? imageMessage.metadata.pendingPreviewId
+          : "";
+        const nextMessages = pendingPreviewId
+          ? current.messages.filter((message) => message.id !== pendingPreviewId)
+          : current.messages;
+        const existingMessageIndex = nextMessages.findIndex((message) => message.id === imageMessage.id);
+        if (existingMessageIndex >= 0) {
+          appendedImageMessage = true;
+          if (imageMessage.metadata?.pendingImage === true) {
+            const messages = [...nextMessages];
+            messages[existingMessageIndex] = imageMessage;
+            return { ...current, messages };
+          }
+          return nextMessages === current.messages ? current : { ...current, messages: nextMessages };
+        }
+        appendedImageMessage = true;
+        return {
+          ...current,
+          messages: [...nextMessages, imageMessage].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+        };
+      });
     }
+    if (payload.status === "succeeded" || payload.status === "failed" || payload.status === "cancelled") {
+      queryClient.setQueryData<{ messages: Message[] }>(["messages", sessionId], (current) => current ? {
+        ...current,
+        messages: current.messages.filter((message) => !(message.metadata?.pendingImage === true && message.metadata?.jobId === payload.jobId))
+      } : current);
+    }
+    if ((payload.status !== "running" || payload.resultImageId) && !appendedImageMessage) {
+      queryClient.invalidateQueries({ queryKey: ["messages", sessionId] });
+    }
+    if (payload.status !== "running") queryClient.invalidateQueries({ queryKey: ["images"] });
     if (payload.status !== "running") {
       queryClient.invalidateQueries({ queryKey: ["cases"] });
     }
@@ -1832,12 +1874,24 @@ export function WorkbenchShell({ user }: { user: User }) {
                 <span>{t("sidebar.images")}</span>
               </NavLink>
               <NavLink
+                to="/videos"
+                className={({ isActive }) => cx("nav-item", isActive && "active")}
+                aria-label={t("sidebar.videos")}
+                data-sidebar-tip={t("sidebar.videos")}
+                data-sidebar-selection-key="nav:/videos"
+                onPointerDown={(event) => handleSidebarMainNavPointerDown(event, 3)}
+                onClick={(event) => handleMainRouteNavigation(event, "/videos")}
+              >
+                <Film size={18} />
+                <span>{t("sidebar.videos")}</span>
+              </NavLink>
+              <NavLink
                 to="/prompt-templates"
                 className={({ isActive }) => cx("nav-item", isActive && "active")}
                 aria-label={t("sidebar.promptCreation")}
                 data-sidebar-tip={t("sidebar.promptCreation")}
                 data-sidebar-selection-key="nav:/prompt-templates"
-                onPointerDown={(event) => handleSidebarMainNavPointerDown(event, 3)}
+                onPointerDown={(event) => handleSidebarMainNavPointerDown(event, 4)}
                 onClick={(event) => handleMainRouteNavigation(event, "/prompt-templates")}
               >
                 <Sparkles size={18} />
@@ -2228,6 +2282,7 @@ export function WorkbenchShell({ user }: { user: User }) {
         <div className="page-route-stage" ref={routeTransitionStageRef}>
           <Routes>
             <Route path="/" element={<ChatPage user={user} />} />
+            <Route path="/live-demo" element={<ChatPage user={user} />} />
             <Route path="/chat/:sessionId" element={<ChatPage user={user} sessionActions={chatPageSessionActions} />} />
             <Route
               path="/cases"
@@ -2265,6 +2320,7 @@ export function WorkbenchShell({ user }: { user: User }) {
                 </PageRouteTransition>
               )}
             />
+            <Route path="/videos" element={<PageRouteTransition key="videos"><VideosPage /></PageRouteTransition>} />
             <Route
               path="/help"
               element={(

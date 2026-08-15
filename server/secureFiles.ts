@@ -5,12 +5,24 @@ import path from "node:path";
 import { appDb, configDb, getAll, getOne, run } from "./db";
 import { absoluteDataPath } from "./paths";
 import { now } from "./utils";
-import { deleteObjectStorageFile, objectStorageUsesCos, readObjectStorageFile, writeObjectStorageFile } from "./objectStorage";
+import {
+  deleteObjectStorageFile,
+  forgetObjectStorageCache,
+  markObjectStorageCachePending,
+  markObjectStorageUploaded,
+  objectStorageFileIsSynced,
+  objectStorageUsesCos,
+  readObjectStorageFile,
+  touchObjectStorageCache,
+  writeObjectStorageFile
+} from "./objectStorage";
 
 const MAGIC = Buffer.from("GIMG1");
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 const KEY_ID = "default";
+const pendingCosUploads = new Map<string, Promise<void>>();
+const queuedCosUploadBuffers = new Map<string, Buffer>();
 
 function ensureFileSecurityTable() {
   configDb.run(`
@@ -142,21 +154,68 @@ export function decryptBuffer(buffer: Buffer) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
-export async function readStoredFile(relativePath: string) {
+function queueCosUpload(cleanPath: string, buffer: Buffer) {
+  queuedCosUploadBuffers.set(cleanPath, buffer);
+  const existing = pendingCosUploads.get(cleanPath);
+  if (existing) return existing;
+  const upload = (async () => {
+    while (queuedCosUploadBuffers.has(cleanPath)) {
+      const nextBuffer = queuedCosUploadBuffers.get(cleanPath);
+      queuedCosUploadBuffers.delete(cleanPath);
+      if (!nextBuffer) continue;
+      await writeObjectStorageFile(cleanPath, nextBuffer, storedImageMimeType(nextBuffer));
+      markObjectStorageUploaded(cleanPath);
+    }
+  })()
+    .catch((error) => {
+      console.warn("图片后台上传 COS 失败，已保留本地副本", cleanPath, error);
+    })
+    .finally(() => {
+      pendingCosUploads.delete(cleanPath);
+      queuedCosUploadBuffers.delete(cleanPath);
+    });
+  pendingCosUploads.set(cleanPath, upload);
+  return upload;
+}
+
+export function secureVideoPath(userId: string, videoId: string) {
+  return [
+    "files",
+    "secure",
+    "videos",
+    sanitizeSegment(userId, "user"),
+    `${sanitizeSegment(videoId, "video")}.gimg`
+  ].join("/");
+}
+
+export function localStoredFileExists(relativePath: string) {
   const cleanPath = relativePath.replace(/^\/+/, "").replaceAll("\\", "/");
-  if (objectStorageUsesCos(cleanPath)) {
+  return existsSync(absoluteDataPath(cleanPath));
+}
+
+export async function readStoredFile(relativePath: string, options: { syncObjectStorage?: boolean } = {}) {
+  const cleanPath = relativePath.replace(/^\/+/, "").replaceAll("\\", "/");
+  const syncObjectStorage = options.syncObjectStorage !== false;
+  if (localStoredFileExists(cleanPath)) {
     try {
-      return await readObjectStorageFile(cleanPath);
-    } catch (error) {
-      if (!existsSync(absoluteDataPath(cleanPath))) throw error;
       const buffer = decryptBuffer(await readFile(absoluteDataPath(cleanPath)));
-      try {
-        await writeObjectStorageFile(cleanPath, buffer, storedImageMimeType(buffer));
-      } catch (uploadError) {
-        console.warn("本地图片自动补传 COS 失败", cleanPath, uploadError);
+      if (syncObjectStorage && objectStorageUsesCos(cleanPath)) {
+        if (objectStorageFileIsSynced(cleanPath)) touchObjectStorageCache(cleanPath);
+        else void queueCosUpload(cleanPath, buffer);
       }
       return buffer;
+    } catch (error) {
+      if (!objectStorageUsesCos(cleanPath)) throw error;
     }
+  }
+  if (objectStorageUsesCos(cleanPath)) {
+    const buffer = await readObjectStorageFile(cleanPath);
+    if (syncObjectStorage) {
+      await mkdir(path.dirname(absoluteDataPath(cleanPath)), { recursive: true });
+      await writeFile(absoluteDataPath(cleanPath), encryptBuffer(buffer));
+      markObjectStorageUploaded(cleanPath);
+    }
+    return buffer;
   }
   const buffer = await readFile(absoluteDataPath(cleanPath));
   return decryptBuffer(buffer);
@@ -164,13 +223,11 @@ export async function readStoredFile(relativePath: string) {
 
 export async function writeEncryptedFile(relativePath: string, buffer: Buffer) {
   const cleanPath = relativePath.replace(/^\/+/, "").replaceAll("\\", "/");
-  if (objectStorageUsesCos(cleanPath)) {
-    await writeObjectStorageFile(cleanPath, buffer, storedImageMimeType(buffer));
-    return;
-  }
   const absolutePath = absoluteDataPath(cleanPath);
   await mkdir(path.dirname(absolutePath), { recursive: true });
+  if (objectStorageUsesCos(cleanPath)) markObjectStorageCachePending(cleanPath);
   await writeFile(absolutePath, encryptBuffer(buffer));
+  if (objectStorageUsesCos(cleanPath)) void queueCosUpload(cleanPath, buffer);
 }
 
 function storedImageMimeType(buffer: Buffer) {
@@ -228,6 +285,7 @@ export async function deleteStoredFilesIfUnreferenced(paths: string[]) {
     if (isStoredPathReferenced(filePath)) continue;
     if (objectStorageUsesCos(filePath)) {
       await deleteObjectStorageFile(filePath).catch((error) => console.warn(`COS 文件删除失败: ${filePath}`, error));
+      forgetObjectStorageCache(filePath);
     }
     await unlink(absoluteDataPath(filePath)).catch((error) => {
       if (existsSync(absoluteDataPath(filePath))) console.warn(`文件删除失败: ${filePath}`, error);

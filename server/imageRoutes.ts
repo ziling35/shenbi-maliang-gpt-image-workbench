@@ -6,6 +6,7 @@ import {
   AUTO_PROVIDER_ID,
   IMAGE_JOB_RUNNING_TIMEOUT_MS,
   IMAGE_JOB_TIMEOUT_ERROR,
+  imageRequestSizeError,
   requestImageCount,
   requestImageSize,
   resolveImageResultRetryCount
@@ -13,6 +14,7 @@ import {
 import { recordCasePromptUsage } from "./caseUsage";
 import { appDb, getAll, getOne, run } from "./db";
 import { fileToDataUrl, saveProviderImageResults, snapshotImageReferences, type ImageReferenceSnapshotInput } from "./imageFiles";
+import { createPendingImagePreviews, createStreamingPendingImagePreview, releasePendingImagePreviewsForJob, type CreatedPendingImagePreview } from "./pendingImagePreviews";
 import { emitImageJobEvent, type ImageJobEventStatus } from "./imageJobEvents";
 import {
   abortImageJobExecution,
@@ -41,8 +43,10 @@ import {
 import { boundedPaginationFromQuery, pageInfo } from "./pagination";
 import { invalidateLibraryFacetCache } from "./libraryRoutes";
 import { imageDateSearchConditions } from "./imageSearch";
-import { callProviderChain, providerChainById, providerRequestWasCancelled } from "./providerRuntime";
+import { classifyImageLayoutIntent } from "./imageLayoutIntent";
+import { callProviderChain, providerChainById, providerRequestMustNotRetry, providerRequestWasCancelled, type ProviderStreamingImageSink } from "./providerRuntime";
 import { providerResponseSnapshot } from "./responseSnapshots";
+import { classifyAmbiguousImageMultiPanelIntent } from "./promptTitle";
 import { reviewConversationPrompt } from "./safetyReview";
 import { deleteStoredFilesIfUnreferenced } from "./secureFiles";
 import {
@@ -71,6 +75,7 @@ import { markProviderRequestPostProcessFailure } from "./auditLog";
 import { reserveImageCharge, settlePartialImageCharge } from "./billing";
 import {
   requestedImageCountFromPayload,
+  singleImageVariantPayload,
   singleImageSupplementPayload,
   supplementalImageRequestBudget
 } from "./imageRequestSupplement";
@@ -84,17 +89,21 @@ import {
   expireStaleImageJobs,
   imageDeleteImpact,
   insertMessage,
+  serializeMessage,
   serializeJob
 } from "./chatStore";
 import { imageBatchResult, parseImageBatchIds } from "./imageBatch";
 
 function providerPrompt(prompt: string, imageCount: number) {
-  if (imageCount <= 1) return prompt;
-  return [
-    prompt,
-    "",
-    `数量由接口参数 n=${imageCount} 控制。请把每个结果都生成成一张独立完整的单图，不要在单张图片中做四宫格、拼贴、分屏或多张图片排版。`
-  ].join("\n");
+  return prompt;
+}
+
+async function resolveImageMultiPanelPermission(prompt: string, imageCount: number, userId: string, jobId: string) {
+  if (imageCount <= 1) return false;
+  const intent = classifyImageLayoutIntent(prompt);
+  if (intent === "allow_multi_panel") return true;
+  if (intent === "single_composition") return false;
+  return (await classifyAmbiguousImageMultiPanelIntent(prompt, userId, jobId)) ?? false;
 }
 
 type ImageBackgroundOption = "auto" | "opaque" | "transparent";
@@ -158,7 +167,7 @@ function emitJobStatus(
   jobId: string,
   status: ImageJobEventStatus,
   type?: string,
-  details: { resultImageId?: string | null; error?: string | null; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "supplementing" } = {}
+  details: { resultImageId?: string | null; error?: string | null; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "persisting" | "supplementing"; imageMessage?: Record<string, unknown> } = {}
 ) {
   const normalizedSessionId = String(sessionId ?? "").trim();
   if (!normalizedSessionId) return;
@@ -178,8 +187,74 @@ function emitJobStatus(
     ...(details.completedImageCount !== undefined ? { completedImageCount: details.completedImageCount } : {}),
     ...(details.requestedImageCount !== undefined ? { requestedImageCount: details.requestedImageCount } : {}),
     ...(details.phase !== undefined ? { phase: details.phase } : {}),
+    ...(details.imageMessage ? { imageMessage: details.imageMessage } : {}),
     updatedAt: storedTimestamp || now()
   });
+  if (status === "failed" || status === "cancelled") releasePendingImagePreviewsForJob(jobId, true);
+  if (status === "succeeded") releasePendingImagePreviewsForJob(jobId);
+}
+
+function createStreamingImagePreviewSink(input: {
+  provider: RuntimeProviderRow;
+  userId: string;
+  sessionId: string | null;
+  jobId: string;
+  mode: "generation" | "edit";
+  prompt: string;
+  size: string;
+  quality: string;
+  imageCount: number;
+  imageIndexStart: number;
+  imageTotal: number;
+  parentImageId?: string | null;
+  mimeType: string;
+}): ProviderStreamingImageSink | null {
+  const preview = createStreamingPendingImagePreview({
+    provider: input.provider,
+    userId: input.userId,
+    jobId: input.jobId,
+    imageIndex: input.imageIndexStart,
+    mimeType: input.mimeType
+  });
+  emitJobStatus(input.userId, input.sessionId, input.jobId, "running", input.mode, {
+    completedImageCount: Math.max(0, input.imageIndexStart - 1),
+    requestedImageCount: input.imageCount,
+    phase: "persisting",
+    imageMessage: {
+      id: preview.previewId,
+      role: "assistant",
+      content: input.mode === "edit" ? "编辑图片正在接收，已开始预览" : "图片正在接收，已开始预览",
+      imageId: preview.previewId,
+      imageUrl: preview.url,
+      imageOriginalUrl: preview.url,
+      imagePreviewUrl: preview.url,
+      imageThumbnailUrl: preview.url,
+      imagePrompt: input.prompt,
+      imageOriginPrompt: input.prompt,
+      imageKind: input.mode,
+      imageSize: input.size,
+      imageWidth: 0,
+      imageHeight: 0,
+      imageFileSize: 0,
+      imageQuality: input.quality,
+      imageProviderId: input.provider.id,
+      parentImageId: input.parentImageId ?? null,
+      referenceImages: [],
+      metadata: {
+        mode: input.mode,
+        jobId: input.jobId,
+        n: input.imageCount,
+        imageIndex: input.imageIndexStart,
+        imageTotal: input.imageTotal,
+        pendingImage: true,
+        pendingPreviewId: preview.previewId,
+        pendingFallbackUrl: preview.url,
+        streamingPreview: true
+      },
+      createdAt: now()
+    }
+  });
+  return preview;
 }
 
 async function applyImageFieldSuggestions(imageIds: string[], prompt?: string) {
@@ -496,7 +571,12 @@ async function saveProviderImagesWithRetry({
   sessionId,
   jobId,
   retryCount: retryCountInput,
+  imageIndexOffset = 0,
+  requestedImageTotal,
+  allowMultiPanel = false,
   onResponseJson,
+  onPreviewImages,
+  onStreamingImageStart,
   onSavedImages,
   signal
 }: {
@@ -507,17 +587,33 @@ async function saveProviderImagesWithRetry({
   sessionId: string | null;
   jobId?: string;
   retryCount?: number;
+  imageIndexOffset?: number;
+  requestedImageTotal?: number;
+  allowMultiPanel?: boolean;
   onResponseJson?: (responseJson: unknown) => void;
-  onSavedImages?: (input: { provider: RuntimeProviderRow; savedImages: Awaited<ReturnType<typeof saveProviderImageResults>>; completedImageCount: number; requestedImageCount: number; supplementing: boolean; attemptNo: number }) => Promise<void> | void;
+  onPreviewImages?: (input: { provider: RuntimeProviderRow; responseJson: unknown; attemptNo: number; imageIndexStart: number; imageTotal: number; imageLimit: number }) => Promise<CreatedPendingImagePreview[]> | CreatedPendingImagePreview[];
+  onStreamingImageStart?: (input: { provider: RuntimeProviderRow; mimeType: string; imageIndexStart: number; imageTotal: number }) => Promise<ProviderStreamingImageSink | null> | ProviderStreamingImageSink | null;
+  onSavedImages?: (input: { provider: RuntimeProviderRow; savedImages: Awaited<ReturnType<typeof saveProviderImageResults>>; pendingPreviews?: CreatedPendingImagePreview[]; completedImageCount: number; requestedImageCount: number; supplementing: boolean; attemptNo: number }) => Promise<void> | void;
   signal?: AbortSignal;
 }) {
   let firstError: unknown = null;
   const retryCount = retryCountInput ?? resolveImageResultRetryCount(imageGenerationSettings().resultRetryCount);
   const maxAttempts = retryCount + 1;
+  const pendingPreviewsByResponse = new WeakMap<object, CreatedPendingImagePreview[]>();
+  const emitPreviewImages = async (input: Parameters<NonNullable<typeof onPreviewImages>>[0]) => {
+    const previews = await onPreviewImages?.(input) ?? [];
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    return previews;
+  };
+  const pendingPreviewsForResponse = (responseJson: unknown) => responseJson && typeof responseJson === "object"
+    ? pendingPreviewsByResponse.get(responseJson) ?? []
+    : [];
   const saveResponseImages = async (provider: RuntimeProviderRow, responseJson: unknown, responseAttemptNo: number) => {
     onResponseJson?.(responseJson);
     try {
-      return await saveProviderImageResults(responseJson, provider, () => makeId("img"), userId, sessionId);
+      const savedImages = await saveProviderImageResults(responseJson, provider, () => makeId("img"), userId, sessionId);
+      const pendingPreviews = responseJson && typeof responseJson === "object" ? pendingPreviewsByResponse.get(responseJson) ?? [] : [];
+      return savedImages.map((image, index) => ({ ...image, pendingPreviewId: pendingPreviews[index]?.previewId }));
     } catch (error) {
       markProviderRequestPostProcessFailure({
         provider,
@@ -532,13 +628,19 @@ async function saveProviderImagesWithRetry({
   };
   const requestedImageCount = requestedImageCountFromPayload(requestPayload);
   if (requestedImageCount > 1) {
-    const singleImagePayload = singleImageSupplementPayload(requestPayload);
+    const totalImageCount = Math.max(requestedImageCount + imageIndexOffset, Math.trunc(Number(requestedImageTotal) || 0));
     let completedImageCount = 0;
     const tasks = Array.from({ length: requestedImageCount }, (_, imageSlot) => (async () => {
+      const singleImagePayload = singleImageVariantPayload(requestPayload, imageIndexOffset + imageSlot + 1, totalImageCount, { allowMultiPanel });
       let slotFirstError: unknown = null;
       for (let slotAttempt = 1; slotAttempt <= maxAttempts; slotAttempt += 1) {
         if (signal?.aborted) throw new Error("图片任务已取消");
         try {
+          const handleProviderResponse = async ({ provider, responseJson }: { provider: RuntimeProviderRow; responseJson: unknown }) => {
+            const pendingPreviews = await emitPreviewImages({ provider, responseJson, attemptNo: slotAttempt, imageIndexStart: imageIndexOffset + imageSlot + 1, imageTotal: totalImageCount, imageLimit: 1 });
+            if (responseJson && typeof responseJson === "object") pendingPreviewsByResponse.set(responseJson, pendingPreviews);
+            return saveResponseImages(provider, responseJson, slotAttempt);
+          };
           const result = await callProviderChain<Awaited<ReturnType<typeof saveProviderImageResults>>>(
             providers,
             mode,
@@ -549,9 +651,13 @@ async function saveProviderImagesWithRetry({
               attemptNo: slotAttempt,
               maxAttempts,
               isRetry: slotAttempt > 1,
-              signal
+              signal,
+              onStreamingImageStart: onStreamingImageStart
+                ? ({ provider: streamProvider, mimeType }) => onStreamingImageStart({ provider: streamProvider, mimeType, imageIndexStart: imageIndexOffset + imageSlot + 1, imageTotal: totalImageCount })
+                : undefined
             },
-            ({ provider, responseJson }) => saveResponseImages(provider, responseJson, slotAttempt)
+            handleProviderResponse,
+            handleProviderResponse
           );
           const returnedImages = result.result ?? [];
           if (returnedImages.length === 0) throw new Error(`${imageOperationLabel(mode)}失败：渠道没有返回可保存的图片`);
@@ -562,6 +668,7 @@ async function saveProviderImagesWithRetry({
           await onSavedImages?.({
             provider: result.provider,
             savedImages: acceptedImages,
+            pendingPreviews: pendingPreviewsForResponse(result.responseJson).slice(0, acceptedImages.length),
             completedImageCount,
             requestedImageCount,
             supplementing: completedImageCount < requestedImageCount,
@@ -570,6 +677,7 @@ async function saveProviderImagesWithRetry({
           return { ...result, savedImages: acceptedImages, attemptNo: slotAttempt };
         } catch (error) {
           if (providerRequestWasCancelled(error, signal)) throw error;
+          if (providerRequestMustNotRetry(error)) throw error;
           if (slotAttempt < maxAttempts) {
             slotFirstError ??= error;
             console.warn(`第 ${imageSlot + 1} 张图片生成失败，自动重试 ${slotAttempt}/${retryCount}`, errorMessage(error, `${imageOperationLabel(mode)}失败`));
@@ -604,6 +712,11 @@ async function saveProviderImagesWithRetry({
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     if (signal?.aborted) throw new Error("图片任务已取消");
     try {
+      const handleProviderResponse = async ({ provider, responseJson }: { provider: RuntimeProviderRow; responseJson: unknown }) => {
+        const pendingPreviews = await emitPreviewImages({ provider, responseJson, attemptNo: attempt, imageIndexStart: imageIndexOffset + 1, imageTotal: requestedImageTotal || requestedImageCount, imageLimit: requestedImageCount });
+        if (responseJson && typeof responseJson === "object") pendingPreviewsByResponse.set(responseJson, pendingPreviews);
+        return saveResponseImages(provider, responseJson, attempt);
+      };
       const { provider, responseJson, result: initialSavedImages } = await callProviderChain<Awaited<ReturnType<typeof saveProviderImageResults>>>(
         providers,
         mode,
@@ -614,9 +727,13 @@ async function saveProviderImagesWithRetry({
           attemptNo: attempt,
           maxAttempts,
           isRetry: attempt > 1,
-          signal
+          signal,
+          onStreamingImageStart: onStreamingImageStart
+            ? ({ provider: streamProvider, mimeType }) => onStreamingImageStart({ provider: streamProvider, mimeType, imageIndexStart: imageIndexOffset + 1, imageTotal: requestedImageTotal || requestedImageCount })
+            : undefined
         },
-        ({ provider, responseJson }) => saveResponseImages(provider, responseJson, attempt)
+        handleProviderResponse,
+        handleProviderResponse
       );
       if (!initialSavedImages) {
         throw new Error(`${imageOperationLabel(mode)}失败：渠道没有返回可保存的图片`);
@@ -627,7 +744,7 @@ async function saveProviderImagesWithRetry({
       if (extraInitialImages.length > 0) {
         await deleteStoredFilesIfUnreferenced(extraInitialImages.map((image) => image.file.path));
       }
-      await onSavedImages?.({ provider, savedImages, completedImageCount: savedImages.length, requestedImageCount, supplementing: savedImages.length < requestedImageCount, attemptNo: attempt });
+      await onSavedImages?.({ provider, savedImages, pendingPreviews: pendingPreviewsForResponse(responseJson).slice(0, savedImages.length), completedImageCount: savedImages.length, requestedImageCount, supplementing: savedImages.length < requestedImageCount, attemptNo: attempt });
       const supplementPayload = singleImageSupplementPayload(requestPayload);
       const supplementBudget = supplementalImageRequestBudget(requestedImageCount, savedImages.length, retryCount);
       for (let supplementAttempt = 1; savedImages.length < requestedImageCount && supplementAttempt <= supplementBudget; supplementAttempt += 1) {
@@ -637,6 +754,11 @@ async function saveProviderImagesWithRetry({
         }
         try {
           const supplementResponseAttemptNo = attempt + supplementAttempt;
+          const handleSupplementResponse = async ({ provider: supplementProvider, responseJson: supplementResponseJson }: { provider: RuntimeProviderRow; responseJson: unknown }) => {
+            const pendingPreviews = await emitPreviewImages({ provider: supplementProvider, responseJson: supplementResponseJson, attemptNo: supplementResponseAttemptNo, imageIndexStart: imageIndexOffset + savedImages.length + 1, imageTotal: requestedImageTotal || requestedImageCount, imageLimit: requestedImageCount - savedImages.length });
+            if (supplementResponseJson && typeof supplementResponseJson === "object") pendingPreviewsByResponse.set(supplementResponseJson, pendingPreviews);
+            return saveResponseImages(supplementProvider, supplementResponseJson, supplementResponseAttemptNo);
+          };
           const supplement = await callProviderChain<Awaited<ReturnType<typeof saveProviderImageResults>>>(
             [provider],
             mode,
@@ -647,9 +769,13 @@ async function saveProviderImagesWithRetry({
               attemptNo: supplementResponseAttemptNo,
               maxAttempts: attempt + supplementBudget,
               isRetry: true,
-              signal
+              signal,
+              onStreamingImageStart: onStreamingImageStart
+                ? ({ provider: streamProvider, mimeType }) => onStreamingImageStart({ provider: streamProvider, mimeType, imageIndexStart: imageIndexOffset + savedImages.length + 1, imageTotal: requestedImageTotal || requestedImageCount })
+                : undefined
             },
-            ({ provider: supplementProvider, responseJson: supplementResponseJson }) => saveResponseImages(supplementProvider, supplementResponseJson, supplementResponseAttemptNo)
+            handleSupplementResponse,
+            handleSupplementResponse
           );
           responseJsons.push(supplement.responseJson);
           const supplementalImages = supplement.result ?? [];
@@ -661,13 +787,14 @@ async function saveProviderImagesWithRetry({
           }
           const acceptedSupplementalImages = supplementalImages.slice(0, remainingCount);
           if (acceptedSupplementalImages.length > 0) {
-            await onSavedImages?.({ provider, savedImages: acceptedSupplementalImages, completedImageCount: savedImages.length, requestedImageCount, supplementing: savedImages.length < requestedImageCount, attemptNo: attempt });
+            await onSavedImages?.({ provider, savedImages: acceptedSupplementalImages, pendingPreviews: pendingPreviewsForResponse(supplement.responseJson).slice(0, acceptedSupplementalImages.length), completedImageCount: savedImages.length, requestedImageCount, supplementing: savedImages.length < requestedImageCount, attemptNo: attempt });
           }
         } catch (error) {
           if (providerRequestWasCancelled(error, signal)) {
             await deleteStoredFilesIfUnreferenced(savedImages.map((image) => image.file.path));
             throw error;
           }
+          if (providerRequestMustNotRetry(error)) throw error;
           console.warn(`渠道少图，自动补图第 ${supplementAttempt}/${supplementBudget} 次失败`, errorMessage(error, `${imageOperationLabel(mode)}补图失败`));
         }
       }
@@ -684,6 +811,7 @@ async function saveProviderImagesWithRetry({
       return { provider, responseJson: combinedResponseJson, savedImages, attemptNo: attempt, retryCount, maxAttempts };
     } catch (error) {
       if (providerRequestWasCancelled(error, signal)) throw error;
+      if (providerRequestMustNotRetry(error)) throw tagRetryError(error, attempt, retryCount);
       if (attempt < maxAttempts) {
         firstError = error;
         const retryLabel = retryCount === 1 ? "一次" : `第 ${attempt}/${retryCount} 次`;
@@ -1282,6 +1410,9 @@ async function runStoredImageJob({
         sessionId: retrySessionId,
         jobId: job.id,
         retryCount: maxAutoRetries,
+        imageIndexOffset: existingImages.length,
+        requestedImageTotal: requestedImageCount,
+        allowMultiPanel: await resolveImageMultiPanelPermission(job.prompt, requestedImageCount, job.user_id, job.id),
         signal
       });
       await assertImageJobExecutionIsActiveAfterSave(
@@ -1453,6 +1584,9 @@ async function runStoredImageJob({
       sessionId: retrySessionId,
       jobId: job.id,
       retryCount: maxAutoRetries,
+      imageIndexOffset: existingImages.length,
+      requestedImageTotal: requestedImageCount,
+      allowMultiPanel: await resolveImageMultiPanelPermission(job.prompt, requestedImageCount, job.user_id, job.id),
       signal
     });
     await assertImageJobExecutionIsActiveAfterSave(
@@ -1628,7 +1762,7 @@ function startStoredImageJob(job: StoredImageJobRow, trigger: StoredImageJobTrig
   if (trigger === "manual") {
     const requestedImageCount = numberFromPayload(requestPayload.n, 1);
     try {
-      reserveImageCharge(job.user_id, job.id, provider.model, requestedImageCount, `${job.id}:retry:${nextManualRetryCount}`);
+      reserveImageCharge(job.user_id, job.id, provider.id, provider.model, requestedImageCount, `${job.id}:retry:${nextManualRetryCount}`);
     } catch (error) {
       run(appDb, "update image_jobs set status = 'failed', error = ?, updated_at = ? where id = ? and status = 'running'", errorMessage(error, "计费失败"), now(), job.id);
       throw error;
@@ -2083,6 +2217,8 @@ api.post("/images/generate", async (c) => {
     return c.json({ error: errorMessage(error, "渠道配置不可用") }, 400);
   }
   const provider = providers[0];
+  const sizeError = imageRequestSizeError(body.size);
+  if (sizeError) return c.json({ error: sizeError }, 400);
   const size = requestImageSize(body.size);
   const quality = String(body.quality ?? provider.default_quality);
   const imageCount = requestImageCount(body.n ?? body.imageCount);
@@ -2101,6 +2237,7 @@ api.post("/images/generate", async (c) => {
   const requestPayload = {
     prompt: providerPrompt(prompt, imageCount),
     size,
+    resolutionTier: String(body.resolutionTier ?? ""),
     quality,
     n: imageCount,
     ...imageOptions.payload,
@@ -2141,7 +2278,7 @@ api.post("/images/generate", async (c) => {
     timestamp
   );
   try {
-    reserveImageCharge(user.id, jobId, provider.model, imageCount);
+    reserveImageCharge(user.id, jobId, provider.id, provider.model, imageCount);
   } catch (error) {
     run(appDb, "delete from image_jobs where id = ?", jobId);
     await deleteImageJobArtifacts(user.id, jobId, clientRequestId);
@@ -2172,11 +2309,40 @@ api.post("/images/generate", async (c) => {
         for (const saved of batch) {
           assertImageJobExecutionIsActive(jobId, 0, 0);
           const imageIndex = savedImageIds.length + 1;
-          run(appDb, `insert into images (id,user_id,session_id,job_id,path,prompt,kind,size,quality,provider_id,mime_type,parent_image_id,provider_file_id,provider_gen_id,provider_conversation_id,provider_parent_message_id,provider_source_account_id,image_width,image_height,image_file_size,generated_attempt_no,generated_by_retry,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, saved.id, user.id, sessionId, jobId, saved.file.path, prompt, "generation", size, quality, batchProvider.id, saved.file.mimeType, null, ...providerImageContextValues(saved.providerContext), saved.file.width, saved.file.height, saved.file.fileSize, batchAttemptNo, batchAttemptNo > 1 ? 1 : 0, now());
+          const createdAt = now();
+          run(appDb, `insert into images (id,user_id,session_id,job_id,path,prompt,kind,size,quality,provider_id,mime_type,parent_image_id,provider_file_id,provider_gen_id,provider_conversation_id,provider_parent_message_id,provider_source_account_id,image_width,image_height,image_file_size,generated_attempt_no,generated_by_retry,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, saved.id, user.id, sessionId, jobId, saved.file.path, prompt, "generation", size, quality, batchProvider.id, saved.file.mimeType, null, ...providerImageContextValues(saved.providerContext), saved.file.width, saved.file.height, saved.file.fileSize, batchAttemptNo, batchAttemptNo > 1 ? 1 : 0, createdAt);
           savedImageIds.push(saved.id);
-          insertMessage(user.id, sessionId, "assistant", "已生成图片", saved.id, { mode: "generation", jobId, n: imageCount, imageIndex, imageTotal: imageCount, ...revisionMetadata, ...branchMetadata });
+          const pendingPreviewId = (saved as { pendingPreviewId?: string }).pendingPreviewId;
+          const messageMetadata = { mode: "generation", jobId, n: imageCount, imageIndex, imageTotal: imageCount, ...(pendingPreviewId ? { pendingPreviewId } : {}), ...revisionMetadata, ...branchMetadata };
+          const messageId = insertMessage(user.id, sessionId, "assistant", "已生成图片", saved.id, messageMetadata);
+          const serializedImageMessage = serializeMessage({
+              id: messageId,
+              user_id: user.id,
+              role: "assistant",
+              content: "已生成图片",
+              image_id: saved.id,
+              metadata: JSON.stringify(messageMetadata),
+              created_at: createdAt,
+              image_path: saved.file.path,
+              image_prompt: prompt,
+              image_kind: "generation",
+              image_size: size,
+              image_width: saved.file.width,
+              image_height: saved.file.height,
+              image_file_size: saved.file.fileSize,
+              image_quality: quality,
+              image_provider_id: batchProvider.id,
+              parent_image_id: null,
+              image_origin_prompt: prompt
+            });
+          const imageMessage = {
+            ...serializedImageMessage,
+            imagePreviewUrl: serializedImageMessage.imagePreviewUrl,
+            imageThumbnailUrl: serializedImageMessage.imageThumbnailUrl,
+            referenceImages: []
+          };
           run(appDb, "update image_jobs set result_image_id=coalesce(result_image_id,?),updated_at=? where id=? and status='running' and coalesce(manual_retry_count,0)=0 and coalesce(recovery_count,0)=0", saved.id, now(), jobId);
-          emitJobStatus(user.id, sessionId, jobId, "running", "generation", { resultImageId: saved.id, completedImageCount, requestedImageCount, phase: supplementing ? "supplementing" : "generating" });
+          emitJobStatus(user.id, sessionId, jobId, "running", "generation", { resultImageId: saved.id, completedImageCount, requestedImageCount, phase: supplementing ? "supplementing" : "generating", imageMessage });
         }
         if (batch.length > 0) invalidateLibraryFacetCache("images");
       };
@@ -2188,7 +2354,66 @@ api.post("/images/generate", async (c) => {
         sessionId,
         jobId,
         retryCount: maxAutoRetries,
+        allowMultiPanel: await resolveImageMultiPanelPermission(prompt, imageCount, user.id, jobId),
         signal: executionController.signal,
+        onPreviewImages: ({ provider, responseJson, imageIndexStart, imageTotal, imageLimit }) => {
+          const previews = createPendingImagePreviews({ responseJson, provider, userId: user.id, jobId, imageIndexStart, imageTotal, limit: imageLimit });
+          for (const preview of previews) {
+            const previewUrl = preview.directUrl ?? preview.url;
+            emitJobStatus(user.id, sessionId, jobId, "running", "generation", {
+              completedImageCount: Math.max(0, imageIndexStart - 1),
+              requestedImageCount: imageCount,
+              phase: "persisting",
+              imageMessage: {
+                id: preview.previewId,
+                role: "assistant",
+                content: "图片已返回，立即预览；原图正在后台保存",
+                imageId: preview.previewId,
+                imageUrl: previewUrl,
+                imageOriginalUrl: previewUrl,
+                imagePreviewUrl: previewUrl,
+                imageThumbnailUrl: previewUrl,
+                imagePrompt: prompt,
+                imageOriginPrompt: prompt,
+                imageKind: "generation",
+                imageSize: size,
+                imageWidth: 0,
+                imageHeight: 0,
+                imageFileSize: 0,
+                imageQuality: quality,
+                imageProviderId: provider.id,
+                parentImageId: null,
+                referenceImages: [],
+                metadata: {
+                  mode: "generation",
+                  jobId,
+                  n: imageCount,
+                  imageIndex: imageIndexStart,
+                  imageTotal,
+                  pendingImage: true,
+                  pendingPreviewId: preview.previewId,
+                  pendingFallbackUrl: preview.url
+                },
+                createdAt: now()
+              }
+            });
+          }
+          return previews;
+        },
+        onStreamingImageStart: ({ provider, mimeType, imageIndexStart, imageTotal }) => createStreamingImagePreviewSink({
+          provider,
+          userId: user.id,
+          sessionId,
+          jobId,
+          mode: "generation",
+          prompt,
+          size,
+          quality,
+          imageCount,
+          imageIndexStart,
+          imageTotal,
+          mimeType
+        }),
         onSavedImages: ({ provider, savedImages: batch, completedImageCount, requestedImageCount, supplementing, attemptNo: batchAttemptNo }) => persistGeneratedImages(batch, provider, batchAttemptNo, completedImageCount, requestedImageCount, supplementing)
       });
       await assertImageJobExecutionIsActiveAfterSave(jobId, 0, 0, savedImages);
@@ -2252,8 +2477,6 @@ api.post("/images/generate", async (c) => {
         settlePartialImageCharge(jobId, savedImageIds.length);
         console.warn(`渠道返回图片数量不足，已按实际结果结算：期望 ${imageCount} 张，实际 ${savedImageIds.length} 张`);
       }
-      await applyImageFieldSuggestions(savedImageIds, prompt);
-      await ensureImageEditSuggestionsForImages(user.id, savedImageIds, preparedEditSuggestions);
       const completed = run(
         appDb,
         `update image_jobs
@@ -2271,6 +2494,10 @@ api.post("/images/generate", async (c) => {
       );
       if (Number(completed.changes ?? 0) > 0) {
         emitJobStatus(user.id, sessionId, jobId, "succeeded", "generation", { resultImageId: savedImageIds[0] ?? null });
+        void Promise.allSettled([
+          applyImageFieldSuggestions(savedImageIds, prompt),
+          ensureImageEditSuggestionsForImages(user.id, savedImageIds, preparedEditSuggestions)
+        ]);
       }
       return savedImageIds;
     } catch (error) {
@@ -2394,6 +2621,8 @@ api.post("/images/edit", async (c) => {
     return c.json({ error: errorMessage(error, "渠道配置不可用") }, 400);
   }
   const provider = providers[0];
+  const sizeError = imageRequestSizeError(body.size);
+  if (sizeError) return c.json({ error: sizeError }, 400);
   const size = requestImageSize(body.size);
   const quality = String(body.quality ?? provider.default_quality);
   const imageCount = requestImageCount(body.n ?? body.imageCount);
@@ -2436,6 +2665,13 @@ api.post("/images/edit", async (c) => {
     ...(await Promise.all(validSourceReferences.map((item) => fileToDataUrl(item.path, item.mime_type)))),
     ...sourceInlineImages.map((item) => item.dataUrl)
   ];
+  if (imageUrls.length === 0 && editedMessageId) {
+    const sourceMessage = getOne<{ image_id: string | null }>(appDb, "select image_id from messages where id=? and user_id=?", editedMessageId, user.id);
+    if (sourceMessage?.image_id) {
+      const sourceImage = getOne<ImageRow>(appDb, "select * from images where id=? and user_id=?", sourceMessage.image_id, user.id);
+      if (sourceImage) imageUrls.push(await fileToDataUrl(sourceImage.path, sourceImage.mime_type));
+    }
+  }
   if (imageJobCancelRequested(user.id, clientRequestId)) {
     return c.json({ cancelled: true, clientRequestId }, 409);
   }
@@ -2479,10 +2715,11 @@ api.post("/images/edit", async (c) => {
   const requestPayload = {
     prompt: requestPrompt,
     size,
+    resolutionTier: String(body.resolutionTier ?? ""),
     quality,
     n: imageCount,
-    images: imageUrls.map((image_url) => ({ image_url })),
     ...imageOptions.payload,
+    images: imageUrls.map((image_url) => ({ image_url })),
     ...(maskDataUrl ? { mask: maskDataUrl } : {}),
     ...(sourceReference ? { sourceReference } : {}),
     ...(webConversationContext ? { webConversationContext } : {})
@@ -2620,7 +2857,7 @@ api.post("/images/edit", async (c) => {
     timestamp
   );
   try {
-    reserveImageCharge(user.id, jobId, provider.model, imageCount);
+    reserveImageCharge(user.id, jobId, provider.id, provider.model, imageCount);
   } catch (error) {
     run(appDb, "delete from image_jobs where id = ?", jobId);
     await deleteImageJobArtifacts(user.id, jobId, clientRequestId);
@@ -2667,7 +2904,67 @@ api.post("/images/edit", async (c) => {
       sessionId,
       jobId,
       retryCount: maxAutoRetries,
+      allowMultiPanel: await resolveImageMultiPanelPermission(prompt, imageCount, user.id, jobId),
       signal: executionController.signal,
+      onPreviewImages: ({ provider, responseJson, imageIndexStart, imageTotal, imageLimit }) => {
+        const previews = createPendingImagePreviews({ responseJson, provider, userId: user.id, jobId, imageIndexStart, imageTotal, limit: imageLimit });
+        for (const preview of previews) {
+          const previewUrl = preview.directUrl ?? preview.url;
+          emitJobStatus(user.id, sessionId, jobId, "running", "edit", {
+            completedImageCount: Math.max(0, imageIndexStart - 1),
+            requestedImageCount: imageCount,
+            phase: "persisting",
+            imageMessage: {
+              id: preview.previewId,
+              role: "assistant",
+              content: "编辑图片已返回，立即预览；原图正在后台保存",
+              imageId: preview.previewId,
+              imageUrl: previewUrl,
+              imageOriginalUrl: previewUrl,
+              imagePreviewUrl: previewUrl,
+              imageThumbnailUrl: previewUrl,
+              imagePrompt: prompt,
+              imageOriginPrompt: prompt,
+              imageKind: "edit",
+              imageSize: size,
+              imageWidth: 0,
+              imageHeight: 0,
+              imageFileSize: 0,
+              imageQuality: quality,
+              imageProviderId: provider.id,
+              parentImageId: primarySourceImage?.id ?? null,
+              referenceImages: [],
+              metadata: {
+                mode: "edit",
+                jobId,
+                n: imageCount,
+                imageIndex: imageIndexStart,
+                imageTotal,
+                pendingImage: true,
+                pendingPreviewId: preview.previewId,
+                pendingFallbackUrl: preview.url
+              },
+              createdAt: now()
+            }
+          });
+        }
+        return previews;
+      },
+      onStreamingImageStart: ({ provider, mimeType, imageIndexStart, imageTotal }) => createStreamingImagePreviewSink({
+        provider,
+        userId: user.id,
+        sessionId,
+        jobId,
+        mode: "edit",
+        prompt,
+        size,
+        quality,
+        imageCount,
+        imageIndexStart,
+        imageTotal,
+        parentImageId: primarySourceImage?.id ?? null,
+        mimeType
+      }),
       onResponseJson: (value) => {
         responseJson = value;
       }
@@ -2715,7 +3012,8 @@ api.post("/images/edit", async (c) => {
         console.warn("图片素材引用快照保存失败", error);
       }
       assertImageJobExecutionIsActive(jobId, 0, 0);
-      insertMessage(user.id, sessionId, "assistant", "已完成图片编辑", saved.id, {
+      const pendingPreviewId = (saved as { pendingPreviewId?: string }).pendingPreviewId;
+      const messageMetadata = {
         mode: "edit",
         jobId,
         parentImageId: primarySourceImage?.id ?? null,
@@ -2724,8 +3022,37 @@ api.post("/images/edit", async (c) => {
         n: imageCount,
         imageIndex: index + 1,
         imageTotal: savedImages.length,
+        ...(pendingPreviewId ? { pendingPreviewId } : {}),
         ...revisionMetadata,
         ...branchMetadata
+      };
+      const messageId = insertMessage(user.id, sessionId, "assistant", "已完成图片编辑", saved.id, messageMetadata);
+      const serializedImageMessage = serializeMessage({
+        id: messageId,
+        user_id: user.id,
+        role: "assistant",
+        content: "已完成图片编辑",
+        image_id: saved.id,
+        metadata: JSON.stringify(messageMetadata),
+        created_at: createdAt,
+        image_path: saved.file.path,
+        image_prompt: prompt,
+        image_kind: "edit",
+        image_size: size,
+        image_width: saved.file.width,
+        image_height: saved.file.height,
+        image_file_size: saved.file.fileSize,
+        image_quality: quality,
+        image_provider_id: actualProvider.id,
+        parent_image_id: primarySourceImage?.id ?? null,
+        image_origin_prompt: prompt
+      });
+      emitJobStatus(user.id, sessionId, jobId, "running", "edit", {
+        resultImageId: saved.id,
+        completedImageCount: index + 1,
+        requestedImageCount: imageCount,
+        phase: index + 1 < imageCount ? "supplementing" : "generating",
+        imageMessage: { ...serializedImageMessage, referenceImages: [] }
       });
     }
     const savedImageIds = savedImages.map((image) => image.id);
@@ -2735,8 +3062,6 @@ api.post("/images/edit", async (c) => {
       settlePartialImageCharge(jobId, savedImageIds.length);
       console.warn(`渠道返回图片数量不足，已按实际结果结算：期望 ${imageCount} 张，实际 ${savedImageIds.length} 张`);
     }
-    await applyImageFieldSuggestions(savedImageIds);
-    await ensureImageEditSuggestionsForImages(user.id, savedImageIds, preparedEditSuggestions);
     const resultImageId = savedImageIds[0] ?? null;
     const completed = run(
       appDb,
@@ -2755,6 +3080,10 @@ api.post("/images/edit", async (c) => {
     );
     if (Number(completed.changes ?? 0) > 0) {
       emitJobStatus(user.id, sessionId, jobId, "succeeded", "edit", { resultImageId });
+      void Promise.allSettled([
+        applyImageFieldSuggestions(savedImageIds),
+        ensureImageEditSuggestionsForImages(user.id, savedImageIds, preparedEditSuggestions)
+      ]);
     }
     return;
   } catch (error) {

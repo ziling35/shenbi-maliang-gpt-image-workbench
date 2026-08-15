@@ -62,6 +62,7 @@ const PROMPT_TITLE_TIMEOUT_MS = 60 * 1000;
 const USERNAME_GENERATION_TIMEOUT_MS = 8 * 1000;
 const PROMPT_CATEGORY_SELECTION_TIMEOUT_MS = 20 * 1000;
 const PROMPT_EDIT_SUGGESTION_TIMEOUT_MS = 20 * 1000;
+const IMAGE_LAYOUT_CLASSIFICATION_TIMEOUT_MS = 8 * 1000;
 const MAX_CASE_STYLE_SELECTION_COUNT = 3;
 const EDIT_SUGGESTION_COUNT = 3;
 export type PromptEditSuggestionLocale = LocaleCode;
@@ -984,6 +985,37 @@ export async function generateChineseUsernameCandidates(seed = "", count = 6) {
   } catch (error) {
     console.warn("AI username generation failed", error);
     return fallback;
+  }
+}
+
+export async function classifyAmbiguousImageMultiPanelIntent(prompt: string, userId?: string, jobId?: string) {
+  const normalizedPrompt = String(prompt ?? "").replace(/\s+/g, " ").trim();
+  if (!normalizedPrompt) return null;
+  const provider = activePromptProvider("prompt.optimize");
+  if (!provider) return null;
+  try {
+    const content = await requestPromptModelText(
+      provider,
+      [
+        {
+          role: "system",
+          content: "你是图片布局意图分类器。判断用户是否明确要求每一张最终输出本身就是多画面布局。只有用户明确要求在同一张图片、同一画布、同一页面或同一海报中制作拼贴、宫格、分镜、分屏、多面板时才返回 true。仅仅要求多张图片、多个角度、多个场景、商品详情展示、系列方案或数量大于 1，必须返回 false。只输出 JSON：{\"allowMultiPanel\":true} 或 {\"allowMultiPanel\":false}。"
+        },
+        { role: "user", content: `用户提示词：${Array.from(normalizedPrompt).slice(0, 2400).join("")}` }
+      ],
+      0,
+      IMAGE_LAYOUT_CLASSIFICATION_TIMEOUT_MS,
+      { purpose: "category.classify", userId, jobId, source: "classify.image_layout" }
+    );
+    const parsed = safeJson<Record<string, unknown>>(content, {});
+    if (typeof parsed.allowMultiPanel === "boolean") return parsed.allowMultiPanel;
+    const normalized = content.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+    return null;
+  } catch (error) {
+    console.warn("图片多画面布局意图判断失败", error);
+    return null;
   }
 }
 

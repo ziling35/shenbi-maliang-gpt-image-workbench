@@ -50,6 +50,7 @@ export function backfillCancelledProviderRequests(jobsDb: Database, logsDb: Data
 
 const LEGACY_DALLE_IMAGE_SIZES = ["1024x1024", "1792x1024", "1024x1792"];
 const EXPANDED_GPT_IMAGE_2_SIZES = ["1024x1024", "1024x1536", "1536x2048", "1152x2048", "1536x1024", "2048x1536", "2048x1152"];
+const COMPACT_GPT_IMAGE_2_SIZES = ["1024x1024", "1536x2048", "1152x2048", "2048x1536", "2048x1152"];
 
 function providerModelBaseName(model: string) {
   const normalized = model.trim().toLowerCase();
@@ -89,6 +90,25 @@ function migrateGptImageProviderSizes() {
     if (!isGptImage2ProviderModel(String(row.model ?? ""))) continue;
     const sizes = parseProviderSizeList(row.sizes);
     if (!sameStringList(sizes, LEGACY_DALLE_IMAGE_SIZES) && !sameStringList(sizes, EXPANDED_GPT_IMAGE_2_SIZES)) continue;
+    run(configDb, "update provider_configs set sizes = ?, default_size = ?, updated_at = ? where id = ?", nextSizes, DEFAULT_REQUEST_SIZE, timestamp, row.id);
+  }
+  run(configDb, "insert into config_migrations (id, created_at) values (?, ?)", migrationId, timestamp);
+}
+
+function migrateGptImageProviderResolutionRatios() {
+  const migrationId = "provider_gpt_image_2_resolution_ratios_20260811";
+  if (getOne<{ id: string }>(configDb, "select id from config_migrations where id = ?", migrationId)) return;
+  const timestamp = now();
+  const rows = getAll<Pick<ProviderRow, "id" | "model" | "sizes">>(configDb, "select id, model, sizes from provider_configs");
+  const nextSizes = JSON.stringify(DEFAULT_IMAGE_SIZES);
+  for (const row of rows) {
+    if (!isGptImage2ProviderModel(String(row.model ?? ""))) continue;
+    const sizes = parseProviderSizeList(row.sizes);
+    if (
+      !sameStringList(sizes, LEGACY_DALLE_IMAGE_SIZES)
+      && !sameStringList(sizes, EXPANDED_GPT_IMAGE_2_SIZES)
+      && !sameStringList(sizes, COMPACT_GPT_IMAGE_2_SIZES)
+    ) continue;
     run(configDb, "update provider_configs set sizes = ?, default_size = ?, updated_at = ? where id = ?", nextSizes, DEFAULT_REQUEST_SIZE, timestamp, row.id);
   }
   run(configDb, "insert into config_migrations (id, created_at) values (?, ?)", migrationId, timestamp);
@@ -623,9 +643,12 @@ export function initAppDb() {
   appDb.run("drop index if exists billing_ledger_type_reference_idx");
   appDb.run("create index if not exists billing_ledger_reference_idx on billing_ledger(reference_id, created_at)");
   appDb.run(`create table if not exists billing_reservations (
-    job_id text primary key, user_id text not null, model text not null, image_count integer not null,
+    job_id text primary key, user_id text not null, provider_id text not null default '', model text not null, image_count integer not null,
     amount_cents integer not null, status text not null default 'reserved', created_at text not null, updated_at text not null
   )`);
+  if (!tableColumnExists(appDb, "billing_reservations", "provider_id")) {
+    appDb.run("alter table billing_reservations add column provider_id text not null default ''");
+  }
   appDb.run(`create table if not exists billing_text_reservations (
     id text primary key, user_id text not null, model text not null, purpose text not null,
     amount_cents integer not null, status text not null default 'reserved', reference_id text not null default '',
@@ -858,6 +881,7 @@ export function initAppDb() {
       provider_id text not null default '',
       image_count integer not null default 1,
       size text not null default '',
+      resolution_tier text not null default '1K',
       quality text not null default '',
       prompt_optimizer_model text not null default 'system',
       prompt_input_optimize_style text not null default 'standard',
@@ -872,6 +896,18 @@ export function initAppDb() {
   if (!tableColumnExists(appDb, "composer_settings", "prompt_optimizer_model")) {
     appDb.run("alter table composer_settings add column prompt_optimizer_model text not null default 'system'");
   }
+  if (!tableColumnExists(appDb, "composer_settings", "resolution_tier")) {
+    appDb.run("alter table composer_settings add column resolution_tier text not null default '1K'");
+  }
+  appDb.run(`update composer_settings set size = case size
+    when '1024x1024' then '1:1'
+    when '1536x2048' then '3:4'
+    when '1152x2048' then '9:16'
+    when '2048x1536' then '4:3'
+    when '2048x1152' then '16:9'
+    when '1024x1536' then '2:3'
+    when '1536x1024' then '3:2'
+    else size end`);
   appDb.run("create index if not exists composer_settings_user_updated_idx on composer_settings(user_id, updated_at desc)");
 
   appDb.run(`
@@ -941,6 +977,35 @@ export function initAppDb() {
   `);
   appDb.run("create unique index if not exists session_share_messages_order_idx on session_share_messages(share_id, sort_order)");
   appDb.run("create index if not exists session_share_messages_message_idx on session_share_messages(message_id)");
+
+  appDb.run(`
+    create table if not exists video_jobs (
+      id text primary key,
+      user_id text not null,
+      provider_id text not null,
+      model text not null,
+      mode text not null,
+      prompt text not null,
+      negative_prompt text not null default '',
+      duration integer not null,
+      aspect_ratio text not null,
+      generate_audio integer not null default 1,
+      input_images_json text not null default '[]',
+      remote_task_id text not null default '',
+      status text not null default 'queued',
+      progress integer not null default 0,
+      remote_url text not null default '',
+      path text not null default '',
+      mime_type text not null default 'video/mp4',
+      file_size integer not null default 0,
+      error text not null default '',
+      amount_cents integer not null default 0,
+      created_at text not null,
+      updated_at text not null,
+      completed_at text
+    )
+  `);
+  appDb.run("create index if not exists video_jobs_user_created_idx on video_jobs(user_id, created_at desc)");
 
   appDb.run(`
     create table if not exists image_jobs (
@@ -1997,12 +2062,63 @@ export function initAppDb() {
 
 export function initConfigDb() {
   configDb.run("PRAGMA journal_mode = MEMORY");
+  configDb.run(`
+    create table if not exists config_migrations (
+      id text primary key,
+      created_at text not null
+    )
+  `);
   configDb.run(`create table if not exists billing_model_prices (
-    model text primary key, price_cents integer not null, enabled integer not null default 1, updated_at text not null
+    provider_id text not null default '', model text not null, price_cents integer not null,
+    enabled integer not null default 1, updated_at text not null, primary key(provider_id, model)
   )`);
+  if (!tableColumnExists(configDb, "billing_model_prices", "provider_id")) {
+    configDb.exec("begin immediate");
+    try {
+      configDb.run("alter table billing_model_prices rename to billing_model_prices_legacy");
+      configDb.run(`create table billing_model_prices (
+        provider_id text not null default '', model text not null, price_cents integer not null,
+        enabled integer not null default 1, updated_at text not null, primary key(provider_id, model)
+      )`);
+      configDb.run(`insert into billing_model_prices(provider_id,model,price_cents,enabled,updated_at)
+        select '',model,price_cents,enabled,updated_at from billing_model_prices_legacy`);
+      configDb.run("drop table billing_model_prices_legacy");
+      configDb.exec("commit");
+    } catch (error) {
+      configDb.exec("rollback");
+      throw error;
+    }
+  }
   configDb.run(`create table if not exists billing_text_model_prices (
     model text primary key, price_cents integer not null, enabled integer not null default 1, updated_at text not null
   )`);
+  configDb.run(`create table if not exists video_provider_configs (
+    id text primary key, name text not null, enabled integer not null default 1,
+    base_url text not null, api_key_env text not null default '', api_key_value text not null default '',
+    model text not null, protocol text not null default 'veo_videos', proxy_enabled integer not null default 0,
+    created_at text not null, updated_at text not null
+  )`);
+  if (!tableColumnExists(configDb, "video_provider_configs", "protocol")) {
+    configDb.run("alter table video_provider_configs add column protocol text not null default 'veo_videos'");
+  }
+  configDb.run(`create table if not exists billing_video_model_prices (
+    provider_id text not null, model text not null, duration integer not null,
+    price_cents integer not null, enabled integer not null default 1, updated_at text not null,
+    primary key(provider_id, model, duration)
+  )`);
+  const grokVideoProviderMigrationId = "seed_grok_video_provider_20260814";
+  if (!getOne<{ id: string }>(configDb, "select id from config_migrations where id = ?", grokVideoProviderMigrationId)) {
+    const timestamp = now();
+    run(configDb, `insert or ignore into video_provider_configs
+      (id,name,enabled,base_url,api_key_env,api_key_value,model,protocol,proxy_enabled,created_at,updated_at)
+      values (?,?,?,?,?,?,?,?,?,?,?)`,
+      "default-grok-video", "Grok Web Videos", 0, "http://grok2api.ziling.site/v1", "GROK2API_API_KEY", "",
+      "grok-imagine-video-1.5", "grok_videos", 0, timestamp, timestamp);
+    run(configDb, "insert or ignore into billing_video_model_prices(provider_id,model,duration,price_cents,enabled,updated_at) values(?,?,?,?,?,?)", "default-grok-video", "grok-imagine-video-1.5", 4, 0, 0, timestamp);
+    run(configDb, "insert or ignore into billing_video_model_prices(provider_id,model,duration,price_cents,enabled,updated_at) values(?,?,?,?,?,?)", "default-grok-video", "grok-imagine-video-1.5", 6, 0, 0, timestamp);
+    run(configDb, "insert or ignore into billing_video_model_prices(provider_id,model,duration,price_cents,enabled,updated_at) values(?,?,?,?,?,?)", "default-grok-video", "grok-imagine-video-1.5", 8, 0, 0, timestamp);
+    run(configDb, "insert into config_migrations (id, created_at) values (?, ?)", grokVideoProviderMigrationId, timestamp);
+  }
   configDb.run(`create table if not exists epay_settings (
     id text primary key, enabled integer not null default 0, api_url text not null default '', merchant_id text not null default '',
     merchant_key text not null default '', payment_types text not null default 'alipay,wxpay', minimum_recharge_cents integer not null default 100,
@@ -2195,6 +2311,7 @@ export function initConfigDb() {
       type text not null,
       channel text not null default 'api',
       enabled integer not null default 1,
+      sort_order integer not null default 100,
       base_url text not null,
       api_key_env text,
       api_key_value text,
@@ -2206,9 +2323,15 @@ export function initConfigDb() {
       responses_model text not null default 'gpt-5.5',
       sizes text not null,
       qualities text not null,
+      resolution_tiers text not null default '["1K","2K","4K"]',
       default_size text not null,
       default_quality text not null,
       response_image_path text not null,
+      image_response_format text not null default 'auto',
+      protocol text not null default 'openai_images',
+      stream_enabled integer not null default 1,
+      image_form_field text not null default 'image',
+      api_key_header text not null default 'authorization',
       proxy_enabled integer not null default 0,
       quota_mode text not null default 'codex_first',
       fallback_to_conversation integer not null default 1,
@@ -2408,6 +2531,7 @@ export function initConfigDb() {
 
   for (const [column, definition] of [
     ["channel", "text not null default 'api'"],
+    ["sort_order", "integer not null default 100"],
     ["route_mode", "text not null default 'images_api'"],
     ["responses_path", "text not null default '/v1/responses'"],
     ["responses_model", "text not null default 'gpt-5.5'"],
@@ -2417,11 +2541,73 @@ export function initConfigDb() {
     ["web_account_id", "text not null default ''"],
     ["web_account_ids", "text not null default '[]'"],
     ["web_account_mode", "text not null default 'priority'"],
-    ["web_cookies", "text"]
+    ["web_cookies", "text"],
+    ["image_response_format", "text not null default 'auto'"],
+    ["resolution_tiers", "text not null default '[\"1K\",\"2K\",\"4K\"]'"],
+    ["protocol", "text not null default 'openai_images'"],
+    ["stream_enabled", "integer not null default 1"],
+    ["image_form_field", "text not null default 'image'"],
+    ["api_key_header", "text not null default 'authorization'"]
   ] as Array<[string, string]>) {
     if (!tableColumnExists(configDb, "provider_configs", column)) {
       configDb.run(`alter table provider_configs add column ${column} ${definition}`);
     }
+  }
+  const providerSortMigrationId = "provider_sort_order_20260814";
+  if (!getOne<{ id: string }>(configDb, "select id from config_migrations where id = ?", providerSortMigrationId)) {
+    const providers = getAll<{ id: string }>(configDb, "select id from provider_configs order by created_at asc, rowid asc");
+    providers.forEach((provider, index) => run(configDb, "update provider_configs set sort_order = ? where id = ?", index, provider.id));
+    run(configDb, "insert into config_migrations (id, created_at) values (?, ?)", providerSortMigrationId, now());
+  }
+  const grokImagesProviderMigrationId = "seed_grok_images_provider_20260814";
+  if (!getOne<{ id: string }>(configDb, "select id from config_migrations where id = ?", grokImagesProviderMigrationId)) {
+    const timestamp = now();
+    run(
+      configDb,
+      `insert or ignore into provider_configs (
+        id, name, type, channel, enabled, sort_order, base_url, api_key_env, api_key_value,
+        route_mode, generation_path, edit_path, responses_path, model, responses_model,
+        sizes, qualities, default_size, default_quality, response_image_path, image_response_format,
+        protocol, stream_enabled, image_form_field, api_key_header, proxy_enabled, quota_mode,
+        fallback_to_conversation, web_account_id, web_account_ids, web_account_mode, web_cookies,
+        created_at, updated_at
+      ) values (${Array.from({ length: 34 }, () => "?").join(", ")})`,
+      "default-grok-images",
+      "Grok Web Images",
+      "openai-compatible",
+      "api",
+      0,
+      1000,
+      "http://grok2api.ziling.site/v1",
+      "GROK2API_API_KEY",
+      "",
+      "images_api",
+      "/v1/images/generations",
+      "/v1/images/edits",
+      "/v1/responses",
+      "grok-imagine-image-2.0",
+      "",
+      JSON.stringify(["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"]),
+      JSON.stringify(["low", "medium"]),
+      "1:1",
+      "medium",
+      "data[0].url",
+      "url",
+      "grok_images",
+      0,
+      "image",
+      "authorization",
+      0,
+      "codex_first",
+      0,
+      "",
+      "[]",
+      "priority",
+      "",
+      timestamp,
+      timestamp
+    );
+    run(configDb, "insert into config_migrations (id, created_at) values (?, ?)", grokImagesProviderMigrationId, timestamp);
   }
   run(
     configDb,
@@ -2493,6 +2679,7 @@ export function initConfigDb() {
     "%/images/edits"
   );
   migrateGptImageProviderSizes();
+  migrateGptImageProviderResolutionRatios();
   run(
     configDb,
     "update image_generation_settings set mode = ? where mode in (?, ?, ?, ?, ?)",
@@ -2777,6 +2964,9 @@ export function initConfigDb() {
       endpoint text not null,
       status_code integer,
       duration_ms integer not null,
+      response_headers_ms integer not null default 0,
+      response_body_ms integer not null default 0,
+      response_bytes integer not null default 0,
       success integer not null,
       cancelled integer not null default 0,
       error text,
@@ -2799,6 +2989,9 @@ export function initConfigDb() {
     ["attempt_no", "integer not null default 1"],
     ["max_attempts", "integer not null default 1"],
     ["is_retry", "integer not null default 0"],
+    ["response_headers_ms", "integer not null default 0"],
+    ["response_body_ms", "integer not null default 0"],
+    ["response_bytes", "integer not null default 0"],
     ["response_snapshot", "text not null default ''"]
   ] as const) {
     if (!tableColumnExists(configDb, "provider_request_logs", column)) {

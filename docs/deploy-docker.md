@@ -33,6 +33,8 @@ MALIANG_PORT=8787
 
 复制 `deploy/nginx/shenbi-maliang.conf` 到 `/etc/nginx/sites-available/maliang`，把 `ai.example.com` 替换为真实域名：
 
+如果直播导播部署在独立域名，还要把模板中的 `https://live.example.com` 替换为直播页真实来源。该来源只允许嵌入 `/live-demo`，分享、OAuth、上传等敏感页面仍禁止嵌入。
+
 ```bash
 sudo ln -s /etc/nginx/sites-available/maliang /etc/nginx/sites-enabled/maliang
 sudo nginx -t

@@ -66,28 +66,46 @@ function parseUsageRecentRequests(value: string | null | undefined) {
 
 export function toProvider(row: RuntimeProviderRow, includeSecret = false) {
   const channel = normalizeProviderChannel(row.channel || inferChannelFromType(row.type));
+  const routeMode = normalizeRouteMode(row.route_mode);
+  const protocol = row.protocol === "gemini_image" || row.protocol === "grok_images" ? row.protocol : "openai_images";
+  const quotaMode = normalizeQuotaMode(row.quota_mode);
+  const usesResponses =
+    (channel === "chatgpt_web" && quotaMode !== "official_only") ||
+    (channel !== "chatgpt_web" &&
+      protocol === "openai_images" &&
+      (routeMode === "responses" || routeMode === "auto"));
   return {
     id: row.id,
     name: row.name,
     type: row.type,
     channel,
     enabled: Boolean(row.enabled),
+    sortOrder: Number.isFinite(Number(row.sort_order)) ? Number(row.sort_order) : 100,
     baseUrl: row.base_url,
     apiKeyEnv: row.api_key_env ?? "",
     apiKeyValue: includeSecret ? row.api_key_value ?? "" : maskSecret(row.api_key_value),
-    routeMode: normalizeRouteMode(row.route_mode),
+    routeMode,
     generationPath: row.generation_path,
     editPath: row.edit_path,
     responsesPath: row.responses_path || "/v1/responses",
     model: row.model,
-    responsesModel: String(row.responses_model || "").trim() || DEFAULT_RESPONSES_MODEL,
+    responsesModel: usesResponses ? String(row.responses_model || "").trim() || DEFAULT_RESPONSES_MODEL : "",
     sizes: parseJsonArray(row.sizes, DEFAULT_IMAGE_SIZES),
     qualities: parseJsonArray(row.qualities, ["high"]),
+    resolutionTiers: parseJsonArray(row.resolution_tiers, ["1K", "2K", "4K"]),
     defaultSize: row.default_size,
     defaultQuality: row.default_quality,
     responseImagePath: row.response_image_path,
+    imageResponseFormat:
+      row.image_response_format === "url" || row.image_response_format === "b64_json"
+        ? row.image_response_format
+        : "auto",
+    protocol,
+    streamEnabled: Boolean(row.stream_enabled),
+    imageFormField: row.image_form_field === "image[]" ? "image[]" : "image",
+    apiKeyHeader: row.api_key_header === "x-goog-api-key" ? "x-goog-api-key" : "authorization",
     proxyEnabled: Boolean(row.proxy_enabled),
-    quotaMode: normalizeQuotaMode(row.quota_mode),
+    quotaMode,
     webAccountId: row.web_account_id ?? "",
     webAccountIds: parseJsonArray(row.web_account_ids, []),
     webAccountMode: normalizeWebAccountMode(row.web_account_mode),

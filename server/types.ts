@@ -117,6 +117,7 @@ export type ProviderRow = {
   type: string;
   channel: string;
   enabled: number;
+  sort_order: number;
   base_url: string;
   api_key_env: string | null;
   api_key_value: string | null;
@@ -128,9 +129,15 @@ export type ProviderRow = {
   responses_model: string;
   sizes: string;
   qualities: string;
+  resolution_tiers: string;
   default_size: string;
   default_quality: string;
   response_image_path: string;
+  image_response_format: string;
+  protocol: string;
+  stream_enabled: number;
+  image_form_field: string;
+  api_key_header: string;
   proxy_enabled: number;
   quota_mode: string;
   fallback_to_conversation: number;
@@ -377,6 +384,9 @@ export type ProviderRequestLogRow = {
   endpoint: string;
   status_code: number | null;
   duration_ms: number;
+  response_headers_ms: number;
+  response_body_ms: number;
+  response_bytes: number;
   success: number;
   cancelled: number;
   error: string | null;

@@ -1107,7 +1107,7 @@ export function ObjectStorageSettingsPanel() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const query = useQuery({ queryKey: ["config-object-storage"], queryFn: configApi.objectStorage });
-  const [form, setForm] = useState({ enabled: false, secretId: "", secretKey: "", bucket: "", region: "", basePath: "gpt-image-workbench", publicBaseUrl: "" });
+  const [form, setForm] = useState({ enabled: false, secretId: "", secretKey: "", bucket: "", region: "", basePath: "gpt-image-workbench", publicBaseUrl: "", localCacheDays: 7 });
   const save = useMutation({
     mutationFn: () => configApi.saveObjectStorage(form),
     onSuccess: (data) => { setForm({ ...data.settings, secretKey: data.settings.secretKey }); queryClient.setQueryData(["config-object-storage"], data); showToast("对象存储配置已保存"); },
@@ -1123,13 +1123,18 @@ export function ObjectStorageSettingsPanel() {
     onSuccess: (data) => showToast(`历史图片迁移完成：${data.migrated}/${data.total}`),
     onError: (error) => showToast(error instanceof Error ? error.message : "历史图片迁移失败", "error")
   });
+  const cleanupCache = useMutation({
+    mutationFn: configApi.cleanupObjectStorageCache,
+    onSuccess: (data) => showToast(`本地缓存清理完成：删除 ${data.removed} 个文件`),
+    onError: (error) => showToast(error instanceof Error ? error.message : "本地缓存清理失败", "error")
+  });
   useEffect(() => {
     if (!query.data?.settings) return;
     setForm({ ...query.data.settings, secretKey: query.data.settings.secretKey });
   }, [query.data?.settings]);
   return (
     <section className="config-card">
-      <ConfigHeader title="对象存储" desc="将图片原图、预览图和缩略图存储到腾讯云 COS，并通过临时签名地址直连读取。未启用时继续使用本地存储。" />
+      <ConfigHeader title="对象存储" desc="以腾讯云 COS 作为图片主存储，本地仅保留近期缓存。覆盖生成图、预览图、参考图、素材、遮罩、头像和视频。" />
       <div className="config-form-grid">
         <label className="config-switch-row"><span>启用腾讯云 COS</span><input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /></label>
         <label>SecretId<input value={form.secretId} onChange={(event) => setForm({ ...form, secretId: event.target.value })} autoComplete="off" /></label>
@@ -1138,9 +1143,10 @@ export function ObjectStorageSettingsPanel() {
         <label>地域<input value={form.region} onChange={(event) => setForm({ ...form, region: event.target.value })} placeholder="例如 ap-guangzhou" /></label>
         <label>目录前缀<input value={form.basePath} onChange={(event) => setForm({ ...form, basePath: event.target.value })} /></label>
         <label>自定义访问域名（可选）<input value={form.publicBaseUrl} onChange={(event) => setForm({ ...form, publicBaseUrl: event.target.value })} placeholder="https://cdn.example.com" /></label>
+        <label>本地缓存保留天数<input type="number" min={1} max={30} step={1} value={form.localCacheDays} onChange={(event) => setForm({ ...form, localCacheDays: Number(event.target.value) })} /></label>
       </div>
-      <div className="config-actions"><button className="primary-btn" type="button" disabled={save.isPending || query.isLoading} onClick={() => save.mutate()}><Save size={15} />保存配置</button><button className="secondary-btn" type="button" disabled={test.isPending || !form.enabled} onClick={() => test.mutate()}><Check size={15} />测试连接</button><button className="secondary-btn" type="button" disabled={migrate.isPending || !form.enabled} onClick={() => migrate.mutate()}><Upload size={15} />迁移历史图片</button></div>
-      <p className="config-muted-text">安全建议：SecretId 使用最小权限子账号，仅授予指定 Bucket 的对象读写和删除权限；公开域名建议配置腾讯云 CDN 或自定义域名。</p>
+      <div className="config-actions"><button className="primary-btn" type="button" disabled={save.isPending || query.isLoading} onClick={() => save.mutate()}><Save size={15} />保存配置</button><button className="secondary-btn" type="button" disabled={test.isPending || !form.enabled} onClick={() => test.mutate()}><Check size={15} />测试连接</button><button className="secondary-btn" type="button" disabled={migrate.isPending || !form.enabled} onClick={() => migrate.mutate()}><Upload size={15} />迁移历史图片</button><button className="secondary-btn" type="button" disabled={cleanupCache.isPending || !form.enabled} onClick={() => cleanupCache.mutate()}><Trash2 size={15} />清理过期缓存</button></div>
+      <p className="config-muted-text">COS 上传成功后，本地副本会作为缓存保留指定天数；读取 COS 文件后会自动回填缓存。清理任务只删除已确认上传成功的本地副本。SecretId 建议使用最小权限子账号。</p>
     </section>
   );
 }
@@ -1915,6 +1921,9 @@ export function RequestLogsPanel() {
                       <span>{item.operation === "edit" ? "编辑" : "生成"}</span>
                     </div>
                     <small>{requestAttemptLabel(item) || "首次请求"} · {item.durationMs} ms</small>
+                    {item.responseHeadersMs > 0 || item.responseBodyMs > 0 ? (
+                      <small>{`响应头 ${item.responseHeadersMs} ms · 响应体 ${item.responseBodyMs} ms · ${(item.responseBytes / 1024 / 1024).toFixed(2)} MB`}</small>
+                    ) : null}
                   </td>
                   <td className="endpoint-cell">
                     <span className="request-endpoint-text" title={item.endpoint}>{item.endpoint}</span>

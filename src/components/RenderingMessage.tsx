@@ -241,7 +241,7 @@ const drawRenderingDots = (
   }
 };
 
-export const RenderingMessage = memo(function RenderingMessage({ mode, completedImageCount, requestedImageCount, phase }: { mode: RenderingMode; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "supplementing" }) {
+export const RenderingMessage = memo(function RenderingMessage({ mode, completedImageCount, requestedImageCount, phase }: { mode: RenderingMode; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "persisting" | "supplementing" }) {
   const { t } = useI18n();
   const titles = useMemo(
     () => (mode === "edit" ? EDIT_LOADING_TITLE_KEYS : GENERATION_LOADING_TITLE_KEYS).map((key) => t(key)),
@@ -522,13 +522,19 @@ export const RenderingMessage = memo(function RenderingMessage({ mode, completed
   return (
     <article className="message assistant-message rendering-message" aria-live="polite">
       <span key={`${mode}-${titleIndex}`} className={cx("rendering-title", titleSettled && "settled")}>
-        {phase === "supplementing" && completedImageCount && requestedImageCount ? `已生成 ${completedImageCount}/${requestedImageCount} 张，正在补齐剩余图片…` : titles[titleIndex] ?? titles[0]}
+        {phase === "persisting"
+          ? "图片已显示，原图正在后台保存，可继续操作…"
+          : phase === "supplementing" && completedImageCount && requestedImageCount
+            ? `已生成 ${completedImageCount}/${requestedImageCount} 张，正在补齐剩余图片…`
+            : titles[titleIndex] ?? titles[0]}
       </span>
-      <div ref={cardRef} className={`rendering-card rendering-card-variant-${variant}`}>
-        <div className="rendering-dot-field" aria-hidden="true">
-          <canvas ref={canvasRef} className="rendering-dot-canvas" />
+      {phase !== "persisting" ? (
+        <div ref={cardRef} className={`rendering-card rendering-card-variant-${variant}`}>
+          <div className="rendering-dot-field" aria-hidden="true">
+            <canvas ref={canvasRef} className="rendering-dot-canvas" />
+          </div>
         </div>
-      </div>
+      ) : null}
     </article>
   );
 });

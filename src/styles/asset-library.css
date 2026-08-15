@@ -403,6 +403,7 @@
 }
 
 .asset-file-card {
+  position: relative;
   width: 100%;
   min-height: 168px;
   display: grid;
@@ -418,6 +419,31 @@
     border-color 160ms ease,
     background 160ms ease,
     color 160ms ease;
+}
+
+.asset-file-card.is-drag-active {
+  border-color: var(--control-focus-border);
+  background: var(--control-selected-soft-bg);
+  color: #111827;
+}
+
+.asset-drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: inherit;
+  color: #166534;
+  background: rgba(240, 253, 244, 0.96);
+  pointer-events: none;
+}
+
+.asset-drop-hint small {
+  color: #4b5563;
 }
 
 .asset-file-card:hover {

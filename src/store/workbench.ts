@@ -41,6 +41,7 @@ export type PendingEditorCancellationReturn = {
   selectedAssets: AssetItem[];
   imageCount: number;
   size: string;
+  resolutionTier: "1K" | "2K" | "4K";
   quality: string;
   promptInputOptimizeStyle: PromptTemplateOptimizeStyle;
   promptColorSchemeIds: string[];
@@ -79,6 +80,7 @@ export type ComposerSessionDraft = {
   providerId: string;
   imageCount: number;
   size: string;
+  resolutionTier: "1K" | "2K" | "4K";
   quality: string;
   promptInputOptimizeStyle: PromptTemplateOptimizeStyle;
   promptColorSchemeIds: string[];
@@ -162,6 +164,7 @@ function emptyComposerDraft(): ComposerSessionDraft {
     providerId: "",
     imageCount: 1,
     size: "",
+    resolutionTier: "1K",
     quality: "",
     promptInputOptimizeStyle: "standard",
     promptColorSchemeIds: [],
@@ -200,6 +203,7 @@ function hasComposerDraftContent(draft: ComposerSessionDraft) {
     || draft.providerId
     || draft.imageCount !== 1
     || draft.size
+    || draft.resolutionTier !== "1K"
     || draft.quality
     || draft.promptInputOptimizeStyle !== "standard"
     || draft.promptColorSchemeIds.length > 0

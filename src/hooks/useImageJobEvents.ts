@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import type { Message } from "../types";
 
 export type ImageJobEventPayload = {
   jobId: string;
@@ -9,7 +10,8 @@ export type ImageJobEventPayload = {
   error?: string | null;
   completedImageCount?: number;
   requestedImageCount?: number;
-  phase?: "generating" | "supplementing";
+  phase?: "generating" | "persisting" | "supplementing";
+  imageMessage?: Message;
   updatedAt: string;
 };
 
@@ -65,6 +67,12 @@ function isImageJobEventPayload(value: unknown): value is ImageJobEventPayload {
     && typeof record.updatedAt === "string"
     && (record.completedImageCount === undefined || typeof record.completedImageCount === "number")
     && (record.requestedImageCount === undefined || typeof record.requestedImageCount === "number")
+    && (record.imageMessage === undefined || (
+      Boolean(record.imageMessage)
+      && typeof record.imageMessage === "object"
+      && typeof (record.imageMessage as Record<string, unknown>).id === "string"
+      && typeof (record.imageMessage as Record<string, unknown>).createdAt === "string"
+    ))
   );
 }
 

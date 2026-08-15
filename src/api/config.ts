@@ -34,6 +34,7 @@ import type {
   StarterDailyCopy,
   Team,
   User
+  ,VideoProviderConfig
 } from "../types";
 import { request } from "./client";
 
@@ -204,7 +205,7 @@ export type PromptOptimizerProviderTestResult = PromptOptimizerProviderModelsRes
 };
 
 export const configApi = {
-  billing: () => request<{ prices: Array<{model:string;price_cents:number;enabled:number;updated_at:string}>; textPrices:Array<{model:string;price_cents:number;enabled:number;updated_at:string}>; epay:{enabled:boolean;apiUrl:string;merchantId:string;merchantKey:string;paymentTypes:string[];minimumRechargeCents:number}; users:Array<{id:string;account:string;username:string;balance_cents:number}> }>("/api/config/billing"),
+  billing: () => request<{ prices: Array<{provider_id:string;model:string;price_cents:number;enabled:number;updated_at:string}>; providers:Array<{id:string;name:string;model:string;enabled:number}>; textPrices:Array<{model:string;price_cents:number;enabled:number;updated_at:string}>; epay:{enabled:boolean;apiUrl:string;merchantId:string;merchantKey:string;paymentTypes:string[];minimumRechargeCents:number}; users:Array<{id:string;account:string;username:string;balance_cents:number}> }>("/api/config/billing"),
   saveBilling: (payload: unknown) => request<{ok:boolean}>("/api/config/billing",{method:"PUT",body:JSON.stringify(payload)}),
   adjustBalance: (userId:string,payload:{amount:number;description:string}) => request<{balanceCents:number}>(`/api/config/billing/users/${encodeURIComponent(userId)}/balance`,{method:"POST",body:JSON.stringify(payload)}),
   status: () => request<{ setupRequired: boolean; authenticated: boolean }>("/api/config/auth/status"),
@@ -232,10 +233,11 @@ export const configApi = {
       method: "PUT",
       body: JSON.stringify({ publicBaseUrl })
     }),
-  objectStorage: () => request<{ settings: { enabled: boolean; provider: "local" | "cos"; secretId: string; secretKey: string; bucket: string; region: string; basePath: string; publicBaseUrl: string; updatedAt: string } }>("/api/config/object-storage"),
-  saveObjectStorage: (settings: Record<string, unknown>) => request<{ settings: { enabled: boolean; provider: "local" | "cos"; secretId: string; secretKey: string; bucket: string; region: string; basePath: string; publicBaseUrl: string; updatedAt: string } }>("/api/config/object-storage", { method: "PUT", body: JSON.stringify(settings) }),
+  objectStorage: () => request<{ settings: { enabled: boolean; provider: "local" | "cos"; secretId: string; secretKey: string; bucket: string; region: string; basePath: string; publicBaseUrl: string; localCacheDays: number; updatedAt: string } }>("/api/config/object-storage"),
+  saveObjectStorage: (settings: Record<string, unknown>) => request<{ settings: { enabled: boolean; provider: "local" | "cos"; secretId: string; secretKey: string; bucket: string; region: string; basePath: string; publicBaseUrl: string; localCacheDays: number; updatedAt: string } }>("/api/config/object-storage", { method: "PUT", body: JSON.stringify(settings) }),
   testObjectStorage: () => request<{ ok: boolean }>("/api/config/object-storage/test", { method: "POST" }),
   migrateObjectStorage: () => request<{ migrated: number; total: number }>("/api/config/object-storage/migrate", { method: "POST" }),
+  cleanupObjectStorageCache: () => request<{ removed: number; checked: number }>("/api/config/object-storage/cleanup-cache", { method: "POST" }),
   externalMcpSettings: () => request<ConfigExternalMcpSettingsResult>("/api/config/external-mcp-settings"),
   saveExternalMcpSettings: (settings: Pick<ExternalMcpSettings, "accessTokenTtlDays" | "refreshTokenTtlDays">) =>
     request<ConfigExternalMcpSettingsResult>("/api/config/external-mcp-settings", {
@@ -527,6 +529,14 @@ export const configApi = {
       method: "PUT",
       body: JSON.stringify({ providers })
     }),
+  videoProviders: () => request<{
+    providers: VideoProviderConfig[];
+    prices: Array<{ provider_id: string; model: string; duration: number; price_cents: number; enabled: number; updated_at: string }>;
+  }>("/api/config/video-providers"),
+  saveVideoProviders: (payload: unknown) => request<{ ok: boolean }>("/api/config/video-providers", {
+    method: "PUT",
+    body: JSON.stringify(payload)
+  }),
   promptOptimizerProviders: () =>
     request<{ providers: PromptOptimizerProvider[] }>("/api/config/prompt-optimizer-providers"),
   savePromptOptimizerProviders: (providers: PromptOptimizerProvider[]) =>

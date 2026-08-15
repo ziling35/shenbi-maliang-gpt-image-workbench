@@ -1348,10 +1348,6 @@ const SKIP_TEXT_SELECTOR = [
   ".review-prompt-modal-body"
 ].join(",");
 
-function hasCjk(text: string) {
-  return /[\u3400-\u9fff]/.test(text);
-}
-
 function preserveWhitespace(source: string, translated: string) {
   const leading = source.match(/^\s*/)?.[0] ?? "";
   const trailing = source.match(/\s*$/)?.[0] ?? "";
@@ -1402,7 +1398,7 @@ function originalAttributeValue(element: Element, attribute: string, current: st
     return current;
   }
   const translatedStored = translateConfigCopy(stored, locale);
-  if (current !== translatedStored && hasCjk(current) && !isKnownTranslatedValue(stored, current)) {
+  if (current !== translatedStored && !isKnownTranslatedValue(stored, current)) {
     originals.set(attribute, current);
     return current;
   }
@@ -1418,7 +1414,7 @@ function translateTextNode(node: Text, locale: LocaleCode) {
   const stored = textNodeOriginals.get(node);
   let original = stored ?? current;
   const translatedStored = preserveWhitespace(original, translateConfigCopy(original.trim(), locale));
-  if (stored && current !== translatedStored && hasCjk(current) && !isKnownTranslatedValue(original, current)) {
+  if (stored && current !== translatedStored && !isKnownTranslatedValue(original, current)) {
     original = current;
     textNodeOriginals.set(node, original);
   } else if (!stored) {

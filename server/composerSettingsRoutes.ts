@@ -9,6 +9,7 @@ type ComposerSettingsRow = {
   provider_id: string;
   image_count: number;
   size: string;
+  resolution_tier: string;
   quality: string;
   prompt_optimizer_model: string;
   prompt_input_optimize_style: string;
@@ -44,6 +45,7 @@ function publicSettings(row: ComposerSettingsRow | null) {
     providerId: row.provider_id,
     imageCount: Math.max(1, Math.min(10, Math.trunc(Number(row.image_count) || 1))),
     size: row.size,
+    resolutionTier: row.resolution_tier === "2K" || row.resolution_tier === "4K" ? row.resolution_tier : "1K",
     quality: row.quality,
     promptOptimizerModel: row.prompt_optimizer_model || "system",
     promptInputOptimizeStyle: row.prompt_input_optimize_style || "standard",
@@ -78,6 +80,7 @@ export function registerComposerSettingsRoutes(api: Hono) {
     const providerId = String(input.providerId ?? "").trim().slice(0, 200);
     const imageCount = Math.max(1, Math.min(10, Math.trunc(Number(input.imageCount) || 1)));
     const size = String(input.size ?? "").trim().slice(0, 100);
+    const resolutionTier = input.resolutionTier === "2K" || input.resolutionTier === "4K" ? input.resolutionTier : "1K";
     const quality = String(input.quality ?? "").trim().slice(0, 100);
     const promptOptimizerModel = String(input.promptOptimizerModel ?? "system").trim().slice(0, 500) || "system";
     const optimizeStyle = String(input.promptInputOptimizeStyle ?? "standard").trim().slice(0, 100) || "standard";
@@ -87,14 +90,15 @@ export function registerComposerSettingsRoutes(api: Hono) {
     run(
       appDb,
       `insert into composer_settings (
-        user_id, session_id, provider_id, image_count, size, quality, prompt_optimizer_model,
+        user_id, session_id, provider_id, image_count, size, resolution_tier, quality, prompt_optimizer_model,
         prompt_input_optimize_style, prompt_color_scheme_ids_json,
         prompt_color_scheme_injection, created_at, updated_at
-      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(user_id, session_id) do update set
         provider_id = excluded.provider_id,
         image_count = excluded.image_count,
         size = excluded.size,
+        resolution_tier = excluded.resolution_tier,
         quality = excluded.quality,
         prompt_optimizer_model = excluded.prompt_optimizer_model,
         prompt_input_optimize_style = excluded.prompt_input_optimize_style,
@@ -106,6 +110,7 @@ export function registerComposerSettingsRoutes(api: Hono) {
       providerId,
       imageCount,
       size,
+      resolutionTier,
       quality,
       promptOptimizerModel,
       optimizeStyle,

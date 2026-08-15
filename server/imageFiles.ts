@@ -93,6 +93,13 @@ function findBase64Images(source: unknown): string[] {
     return found;
   }
   if (source && typeof source === "object") {
+    const sourceRecord = source as Record<string, unknown>;
+    const inlineDataSource = sourceRecord.inline_data ?? sourceRecord.inlineData;
+    if (inlineDataSource && typeof inlineDataSource === "object") {
+      const inlineData = inlineDataSource as Record<string, unknown>;
+      const data = typeof inlineData.data === "string" ? inlineData.data : "";
+      if (data && looksLikeBase64Image(data)) return [data];
+    }
     const found: string[] = [];
     for (const [key, value] of Object.entries(source)) {
       if (["b64_json", "base64", "image_base64", "image", "result"].includes(key) && typeof value === "string") {
@@ -161,6 +168,13 @@ function findImageUrls(source: unknown): string[] {
     return found;
   }
   if (source && typeof source === "object") {
+    const sourceRecord = source as Record<string, unknown>;
+    const fileDataSource = sourceRecord.file_data ?? sourceRecord.fileData;
+    if (fileDataSource && typeof fileDataSource === "object") {
+      const fileData = fileDataSource as Record<string, unknown>;
+      const fileUri = String(fileData.file_uri ?? fileData.fileUri ?? "").trim();
+      if (fileUri && looksLikeImageUrl(fileUri)) return [fileUri];
+    }
     const found: string[] = [];
     for (const [key, value] of Object.entries(source)) {
       if (["url", "image_url"].includes(key) && typeof value === "string" && looksLikeImageUrl(value)) {
@@ -200,7 +214,39 @@ type ProviderImageResultItem = {
   context: ProviderImageContext;
 };
 
+export type ProviderImagePreviewItem = {
+  value: string;
+  kind: "base64" | "url";
+  mimeType: string;
+};
+
 function structuredImageItemFromRecord(source: Record<string, unknown>, mimeTypeHint = ""): ProviderImageResultItem | null {
+  const inlineDataSource = source.inline_data ?? source.inlineData;
+  if (inlineDataSource && typeof inlineDataSource === "object") {
+    const inlineData = inlineDataSource as Record<string, unknown>;
+    const value = stringField(inlineData, "data");
+    if (value && looksLikeBase64Image(value)) {
+      return {
+        value,
+        kind: "base64",
+        mimeType: normalizeImageMimeType(inlineData.mime_type ?? inlineData.mimeType) || mimeTypeHint,
+        context: providerImageContextFromRecord(source)
+      };
+    }
+  }
+  const fileDataSource = source.file_data ?? source.fileData;
+  if (fileDataSource && typeof fileDataSource === "object") {
+    const fileData = fileDataSource as Record<string, unknown>;
+    const value = stringField(fileData, "file_uri") || stringField(fileData, "fileUri");
+    if (value && looksLikeImageUrl(value)) {
+      return {
+        value,
+        kind: "url",
+        mimeType: normalizeImageMimeType(fileData.mime_type ?? fileData.mimeType) || mimeTypeHint,
+        context: providerImageContextFromRecord(source)
+      };
+    }
+  }
   for (const key of ["b64_json", "base64", "image_base64", "image", "result"]) {
     const value = stringField(source, key);
     if (value && looksLikeBase64Image(value)) {
@@ -230,6 +276,26 @@ function findStructuredImageItems(source: unknown, mimeTypeHint = ""): ProviderI
     found.push(...findStructuredImageItems(value, nextMimeTypeHint));
   }
   return found;
+}
+
+export function providerImagePreviewItems(responseJson: unknown, provider: ProviderRow): ProviderImagePreviewItem[] {
+  const responseMimeType = responseJson && typeof responseJson === "object"
+    ? imageMimeTypeFromRecord(responseJson as Record<string, unknown>)
+    : "";
+  const structured = uniqueImageItems(findStructuredImageItems(responseJson));
+  if (structured.length > 0) {
+    return structured.map((item) => ({
+      value: item.value,
+      kind: item.kind,
+      mimeType: item.mimeType || responseMimeType
+    }));
+  }
+  const base64Values = uniqueImageValues([
+    ...(extractByPath(responseJson, provider.response_image_path) ? [extractByPath(responseJson, provider.response_image_path)!] : []),
+    ...findBase64Images(responseJson)
+  ]);
+  if (base64Values.length > 0) return base64Values.map((value) => ({ value, kind: "base64", mimeType: responseMimeType }));
+  return uniqueImageValues(findImageUrls(responseJson)).map((value) => ({ value, kind: "url", mimeType: responseMimeType }));
 }
 
 function absoluteProviderUrl(provider: ProviderRow, value: string) {

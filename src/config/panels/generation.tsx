@@ -1219,10 +1219,48 @@ function normalizeProviderForm(provider: ProviderConfig): ProviderConfig {
   const merged = { ...emptyProvider(), ...provider };
   return {
     ...merged,
+    sortOrder: Number.isFinite(Number(merged.sortOrder)) ? Number(merged.sortOrder) : 100,
+    imageResponseFormat:
+      merged.imageResponseFormat === "url" || merged.imageResponseFormat === "b64_json"
+        ? merged.imageResponseFormat
+        : "auto",
+    protocol: merged.protocol === "gemini_image" || merged.protocol === "grok_images" ? merged.protocol : "openai_images",
+    streamEnabled: merged.streamEnabled !== false,
+    imageFormField: merged.imageFormField === "image[]" ? "image[]" : "image",
+    apiKeyHeader: merged.apiKeyHeader === "x-goog-api-key" ? "x-goog-api-key" : "authorization",
     proxyEnabled: Boolean(merged.proxyEnabled),
     webAccountIds: Array.isArray(provider.webAccountIds) ? provider.webAccountIds : [],
     webAccountMode: normalizeWebAccountModeValue(provider.webAccountMode)
   };
+}
+
+function isLikelyImageOnlyConfiguredModel(model: string) {
+  const value = model.trim().toLowerCase();
+  if (!value) return false;
+  return /(^|[-_/])(gpt-)?image([-/]|$)|dall[-_]?e|stable[-_ ]?diffusion|(^|[-_/])flux([-/]|$)|(^|[-_/])imagen([-/]|$)|(^|[-_/])seedream([-/]|$)/i.test(value);
+}
+
+function configuredResponsesModelOptions(providers: PromptOptimizerProvider[], currentModel: string) {
+  const sourcesByModel = new Map<string, Set<string>>();
+  for (const provider of providers) {
+    const models = provider.availableModels.length > 0 ? provider.availableModels : [provider.model];
+    for (const rawModel of models) {
+      const model = rawModel.trim();
+      if (!model || isLikelyImageOnlyConfiguredModel(model)) continue;
+      const sources = sourcesByModel.get(model) ?? new Set<string>();
+      sources.add(provider.name.trim() || provider.id);
+      sourcesByModel.set(model, sources);
+    }
+  }
+  const current = currentModel.trim();
+  if (current && !sourcesByModel.has(current)) sourcesByModel.set(current, new Set());
+  return [...sourcesByModel.entries()].map(([model, sources]) => ({
+    value: model,
+    label: model,
+    labelNoTranslate: true,
+    description: sources.size > 0 ? `文本模型配置：${[...sources].join("、")}` : "当前渠道原有配置",
+    descriptionNoTranslate: sources.size > 0
+  }));
 }
 
 function csvList(value: string) {
@@ -1293,6 +1331,8 @@ function ProviderDialog({
   provider,
   existingProviderIds,
   accounts,
+  textModelProviders,
+  defaultTextModel,
   error,
   saving,
   onClose,
@@ -1302,6 +1342,8 @@ function ProviderDialog({
   provider: ProviderConfig;
   existingProviderIds: string[];
   accounts: ImageAccount[];
+  textModelProviders: PromptOptimizerProvider[];
+  defaultTextModel: string;
   error?: Error | null;
   saving: boolean;
   onClose: () => void;
@@ -1312,6 +1354,16 @@ function ProviderDialog({
   const isApi = form.channel === "api";
   const isCpa = form.channel === "cpa";
   const usesProviderApiKey = isApi || isCpa;
+  const usesResponses =
+    (isChatgptWeb && form.quotaMode !== "official_only") ||
+    (!isChatgptWeb &&
+      form.protocol === "openai_images" &&
+      (form.routeMode === "responses" || form.routeMode === "auto"));
+  const responsesModelOptions = useMemo(
+    () => configuredResponsesModelOptions(textModelProviders, form.responsesModel),
+    [form.responsesModel, textModelProviders]
+  );
+  const preferredResponsesModel = defaultTextModel.trim() || responsesModelOptions[0]?.value || "gpt-5.5";
 
   function patch(patchValue: Partial<ProviderConfig>) {
     setForm((value) => ({ ...value, ...patchValue }));
@@ -1324,6 +1376,72 @@ function ProviderDialog({
         existingIds: existingProviderIds.filter((id) => id !== value.id)
       })
     );
+  }
+
+  function patchProtocol(protocol: ProviderConfig["protocol"]) {
+    setForm((value) => protocol === "gemini_image"
+      ? {
+          ...value,
+          protocol,
+          routeMode: "images_api",
+          generationPath: "/v1beta/models/{model}:generateContent",
+          editPath: "/v1beta/models/{model}:generateContent",
+          responseImagePath: "candidates[0].content.parts[0].inline_data.data",
+          apiKeyHeader: "x-goog-api-key",
+          streamEnabled: false,
+          imageFormField: "image",
+          sizes: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
+          qualities: ["medium", "high"],
+          resolutionTiers: ["1K", "2K", "4K"],
+          defaultSize: "1:1",
+          defaultQuality: "high"
+        }
+      : protocol === "grok_images"
+        ? {
+            ...value,
+            protocol,
+            routeMode: "images_api",
+            generationPath: "/v1/images/generations",
+            editPath: "/v1/images/edits",
+            responseImagePath: "data[0].url",
+            apiKeyHeader: "authorization",
+            streamEnabled: false,
+            imageFormField: "image",
+            sizes: ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"],
+            qualities: ["low", "medium"],
+            resolutionTiers: ["1K", "2K"],
+            defaultSize: "1:1",
+            defaultQuality: "medium",
+            imageResponseFormat: "url"
+          }
+        : {
+          ...value,
+          protocol,
+          generationPath: value.generationPath.includes("generateContent") ? "/v1/images/generations" : value.generationPath,
+          editPath: value.editPath.includes("generateContent") ? "/v1/images/edits" : value.editPath,
+          responseImagePath: value.responseImagePath.includes("candidates") ? "data[0].b64_json" : value.responseImagePath,
+          apiKeyHeader: "authorization",
+          streamEnabled: true
+        });
+  }
+
+  function patchRouteMode(routeMode: ProviderConfig["routeMode"]) {
+    setForm((value) => ({
+      ...value,
+      routeMode,
+      responsesModel:
+        routeMode === "responses" || routeMode === "auto"
+          ? value.responsesModel || preferredResponsesModel
+          : value.responsesModel
+    }));
+  }
+
+  function patchQuotaMode(quotaMode: ProviderConfig["quotaMode"]) {
+    setForm((value) => ({
+      ...value,
+      quotaMode,
+      responsesModel: quotaMode === "official_only" ? value.responsesModel : value.responsesModel || preferredResponsesModel
+    }));
   }
 
   return (
@@ -1358,10 +1476,39 @@ function ProviderDialog({
           </label>
           {!isChatgptWeb ? (
             <label>
+              图片接口协议
+              <CustomSelect
+                value={form.protocol}
+                onChange={(value) => patchProtocol(value as ProviderConfig["protocol"])}
+                options={[
+                  {
+                    value: "openai_images",
+                    label: "OpenAI Images",
+                    description: "JSON 文生图 + multipart 图生图",
+                    labelNoTranslate: true
+                  },
+                  {
+                    value: "gemini_image",
+                    label: "Gemini 原生图片",
+                    description: "generateContent + inline_data / file_data",
+                    labelNoTranslate: true
+                  },
+                  {
+                    value: "grok_images",
+                    label: "Grok Web Images",
+                    description: "Grok2API JSON 文生图 + URL 图生图",
+                    labelNoTranslate: true
+                  }
+                ]}
+              />
+            </label>
+          ) : null}
+          {!isChatgptWeb && form.protocol === "openai_images" ? (
+            <label>
               路由方式
               <CustomSelect
                 value={form.routeMode}
-                onChange={(value) => patch({ routeMode: value as ProviderConfig["routeMode"] })}
+                onChange={(value) => patchRouteMode(value as ProviderConfig["routeMode"])}
                 options={routeModeOptions.map((option) => {
                   const [label, description] = option.label.split("：");
                   return { value: option.value, label, description };
@@ -1399,6 +1546,19 @@ function ProviderDialog({
           ) : null}
           {usesProviderApiKey ? (
             <label>
+              API Key 请求头
+              <CustomSelect
+                value={form.apiKeyHeader}
+                onChange={(value) => patch({ apiKeyHeader: value as ProviderConfig["apiKeyHeader"] })}
+                options={[
+                  { value: "authorization", label: "Authorization Bearer", description: "OpenAI 兼容渠道" },
+                  { value: "x-goog-api-key", label: "x-goog-api-key", description: "Gemini 原生渠道" }
+                ]}
+              />
+            </label>
+          ) : null}
+          {usesProviderApiKey ? (
+            <label>
               API Key
               <input
                 value={form.apiKeyValue}
@@ -1412,7 +1572,7 @@ function ProviderDialog({
               额度来源
               <CustomSelect
                 value={form.quotaMode}
-                onChange={(value) => patch({ quotaMode: value as ProviderConfig["quotaMode"] })}
+                onChange={(value) => patchQuotaMode(value as ProviderConfig["quotaMode"])}
                 options={quotaModeOptions}
               />
             </label>
@@ -1471,9 +1631,49 @@ function ProviderDialog({
             <label>
               编辑路径
               <input value={form.editPath} onChange={(event) => patch({ editPath: event.target.value })} />
+              {form.protocol === "gemini_image" ? <small>Gemini 文生图和图生图共用生成路径，保留相同值即可。</small> : form.protocol === "grok_images" ? <small>Grok Web 使用 JSON 请求，生成路径和编辑路径分别对应 /v1/images/generations 与 /v1/images/edits。</small> : null}
             </label>
           ) : null}
-          {!isChatgptWeb ? (
+          {!isChatgptWeb && form.protocol === "openai_images" ? (
+            <label>
+              多参考图字段
+              <CustomSelect
+                value={form.imageFormField}
+                onChange={(value) => patch({ imageFormField: value as ProviderConfig["imageFormField"] })}
+                options={[
+                  { value: "image", label: "image", description: "重复提交 image 字段" },
+                  { value: "image[]", label: "image[]", description: "重复提交 image[] 字段" }
+                ]}
+              />
+            </label>
+          ) : null}
+          {!isChatgptWeb && (form.protocol === "openai_images" || form.protocol === "grok_images") ? (
+            <label>
+              图片返回格式
+              <CustomSelect
+                value={form.imageResponseFormat}
+                onChange={(value) => patch({ imageResponseFormat: value as ProviderConfig["imageResponseFormat"] })}
+                options={[
+                  { value: "auto", label: "自动（兼容优先）", description: "默认使用 Base64，避免上游返回内网地址" },
+                  { value: "url", label: "URL（大图推荐）", description: "更快收到结果，后台再下载保存原图" },
+                  { value: "b64_json", label: "Base64", description: "响应更大，但不依赖上游图片地址可访问" }
+                ]}
+              />
+              <small>{form.protocol === "grok_images" ? "Grok Web 推荐 URL；它支持 url 或 b64_json。" : "4K 或大图渠道优先选 URL；如果渠道返回 127.0.0.1、内网或不可访问地址，请选 Base64。"}</small>
+            </label>
+          ) : null}
+          {!isChatgptWeb && (form.protocol === "openai_images" || form.protocol === "grok_images") ? (
+            <div className="switch-row">
+              <span>尝试流式图片响应</span>
+              <SwitchControl
+                checked={form.streamEnabled}
+                label={form.streamEnabled ? "启用" : "关闭"}
+                onChange={(streamEnabled) => patch({ streamEnabled })}
+              />
+              <small>{form.protocol === "grok_images" ? "Grok Web 扩展 SSE 可逐张返回 URL；如果网关未启用扩展流，关闭后走普通 JSON。" : "渠道未声明支持 SSE 时建议关闭，避免第一次请求失败后再回退。"}</small>
+            </div>
+          ) : null}
+          {usesResponses && !isChatgptWeb ? (
             <label>
               Responses 路径
               <input value={form.responsesPath} onChange={(event) => patch({ responsesPath: event.target.value })} />
@@ -1483,15 +1683,32 @@ function ProviderDialog({
             图片模型
             <input value={form.model} onChange={(event) => patch({ model: event.target.value })} />
           </label>
-          <label>
-            Responses 主模型
-            <input value={form.responsesModel} onChange={(event) => patch({ responsesModel: event.target.value })} />
-            <small>
-              {isChatgptWeb
-                ? "Codex Responses 额度链路使用这个主模型；官网普通额度链路不使用。"
-                : "Responses 路由、CPA 遮罩编辑和自动回退到 Responses 时使用；普通 images_api 仍只发图片模型。"}
-            </small>
-          </label>
+          {usesResponses ? (
+            <label>
+              Responses 主模型
+              {responsesModelOptions.length > 0 ? (
+                <CustomSelect
+                  value={form.responsesModel}
+                  onChange={(responsesModel) => patch({ responsesModel })}
+                  options={responsesModelOptions}
+                  placeholder="选择已配置的文本模型"
+                  menuAutoWidth
+                  menuAutoWidthPadding={32}
+                />
+              ) : (
+                <input
+                  value={form.responsesModel}
+                  onChange={(event) => patch({ responsesModel: event.target.value })}
+                  placeholder="请先在模型配置中添加并启用文本模型"
+                />
+              )}
+              <small>
+                {isChatgptWeb
+                  ? "模型名称来自“模型配置”的已启用文本模型；仅 Codex Responses 额度链路使用。"
+                  : "复用“模型配置”中的文本模型名称，但请求仍由当前生图渠道的 Responses 地址和密钥发送；该渠道必须支持 image_generation 工具。"}
+              </small>
+            </label>
+          ) : null}
           <label>
             尺寸列表
             <input
@@ -1506,6 +1723,25 @@ function ProviderDialog({
               onChange={(event) => patch({ qualities: csvList(event.target.value) })}
             />
           </label>
+          <div className="wide config-resolution-tier-field">
+            <span className="config-field-label">分辨率档位</span>
+            <div className="config-resolution-tier-options">
+              {(["1K", "2K", "4K"] as const).map((tier) => (
+                <label key={tier} className="toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={form.resolutionTiers.includes(tier)}
+                    onChange={(event) => {
+                      const next = event.target.checked ? [...form.resolutionTiers, tier] : form.resolutionTiers.filter((item) => item !== tier);
+                      if (next.length > 0) patch({ resolutionTiers: next });
+                    }}
+                  />
+                  {tier}
+                </label>
+              ))}
+            </div>
+            <small>用户端仅显示这里勾选的档位；实际像素仍由尺寸列表和渠道接口决定。</small>
+          </div>
           <label>
             默认尺寸
             <input value={form.defaultSize} onChange={(event) => patch({ defaultSize: event.target.value })} />
@@ -1544,6 +1780,14 @@ export function ProvidersPanel() {
   const { showToast } = useToast();
   const providersQuery = useQuery({ queryKey: ["config-providers"], queryFn: configApi.providers });
   const accountsQuery = useQuery({ queryKey: ["config-image-accounts"], queryFn: configApi.imageAccounts });
+  const textModelProvidersQuery = useQuery({
+    queryKey: ["config-prompt-optimizer-providers"],
+    queryFn: configApi.promptOptimizerProviders
+  });
+  const languageModelAssignmentsQuery = useQuery({
+    queryKey: ["config-language-model-assignments"],
+    queryFn: configApi.languageModelAssignments
+  });
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [channelFilter, setChannelFilter] = useState<ProviderChannelFilter>("all");
   const [dialog, setDialog] = useState<{ mode: "create" | "edit"; provider: ProviderConfig } | null>(null);
@@ -1584,7 +1828,23 @@ export function ProvidersPanel() {
   );
 
   function persistProviders(nextProviders: ProviderConfig[], message: string) {
-    save.mutate({ nextProviders, message });
+    save.mutate({
+      nextProviders: nextProviders.map((provider, index) => ({ ...provider, sortOrder: index })),
+      message
+    });
+  }
+
+  function moveProvider(providerId: string, direction: -1 | 1) {
+    if (save.isPending) return;
+    const visibleIndex = filteredProviders.findIndex((provider) => provider.id === providerId);
+    const target = filteredProviders[visibleIndex + direction];
+    if (visibleIndex < 0 || !target) return;
+    const currentIndex = providers.findIndex((provider) => provider.id === providerId);
+    const targetIndex = providers.findIndex((provider) => provider.id === target.id);
+    if (currentIndex < 0 || targetIndex < 0) return;
+    const nextProviders = [...providers];
+    [nextProviders[currentIndex], nextProviders[targetIndex]] = [nextProviders[targetIndex], nextProviders[currentIndex]];
+    persistProviders(nextProviders, "渠道顺序已调整");
   }
 
   function openCreateDialog() {
@@ -1658,7 +1918,7 @@ export function ProvidersPanel() {
             </tr>
           </thead>
           <tbody>
-            {filteredProviders.map((provider) => (
+            {filteredProviders.map((provider, providerIndex) => (
               <tr key={provider.id}>
                 <td className="provider-name-cell">
                   <strong>{providerDisplayName(provider)}</strong>
@@ -1677,7 +1937,7 @@ export function ProvidersPanel() {
                   <span className="provider-account-line">{providerAccessSummary(provider, accountsQuery.data?.accounts ?? [])}</span>
                   <small className="provider-address-line">{provider.baseUrl}</small>
                 </td>
-                <td>{`${provider.model} / ${provider.responsesModel}`}</td>
+                <td>{provider.responsesModel ? `${provider.model} / ${provider.responsesModel}` : provider.model}</td>
                 <td>
                   <SwitchControl
                     checked={provider.enabled}
@@ -1687,6 +1947,26 @@ export function ProvidersPanel() {
                   />
                 </td>
                 <td className="row-actions compact-actions">
+                  <button
+                    className="secondary-btn provider-order-btn"
+                    type="button"
+                    title="上移渠道"
+                    aria-label={`上移渠道 ${providerDisplayName(provider)}`}
+                    onClick={() => moveProvider(provider.id, -1)}
+                    disabled={providerIndex === 0 || save.isPending}
+                  >
+                    <ArrowUp size={15} />
+                  </button>
+                  <button
+                    className="secondary-btn provider-order-btn"
+                    type="button"
+                    title="下移渠道"
+                    aria-label={`下移渠道 ${providerDisplayName(provider)}`}
+                    onClick={() => moveProvider(provider.id, 1)}
+                    disabled={providerIndex === filteredProviders.length - 1 || save.isPending}
+                  >
+                    <ArrowDown size={15} />
+                  </button>
                   <button className="secondary-btn" type="button" onClick={() => setDialog({ mode: "edit", provider })}>
                     <Pencil size={15} />
                     编辑
@@ -1718,6 +1998,12 @@ export function ProvidersPanel() {
           provider={dialog.provider}
           existingProviderIds={providers.map((provider) => provider.id)}
           accounts={accountsQuery.data?.accounts ?? []}
+          textModelProviders={(textModelProvidersQuery.data?.providers ?? []).filter((provider) => provider.enabled)}
+          defaultTextModel={
+            languageModelAssignmentsQuery.data?.globalDefault?.resolvedModel
+            || languageModelAssignmentsQuery.data?.defaultProvider?.model
+            || ""
+          }
           saving={save.isPending}
           error={save.error}
           onClose={() => setDialog(null)}

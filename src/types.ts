@@ -143,6 +143,7 @@ export type ProviderConfig = {
   type: string;
   channel: "cpa" | "chatgpt_web" | "api";
   enabled: boolean;
+  sortOrder: number;
   virtual?: boolean;
   baseUrl: string;
   apiKeyEnv: string;
@@ -155,9 +156,15 @@ export type ProviderConfig = {
   responsesModel: string;
   sizes: string[];
   qualities: string[];
+  resolutionTiers: Array<"1K" | "2K" | "4K">;
   defaultSize: string;
   defaultQuality: string;
   responseImagePath: string;
+  imageResponseFormat: "auto" | "url" | "b64_json";
+  protocol: "openai_images" | "gemini_image" | "grok_images";
+  streamEnabled: boolean;
+  imageFormField: "image" | "image[]";
+  apiKeyHeader: "authorization" | "x-goog-api-key";
   proxyEnabled: boolean;
   quotaMode: "codex_first" | "official_first" | "codex_only" | "official_only";
   webAccountId: string;
@@ -499,6 +506,9 @@ export type ProviderRequestLog = {
   endpoint: string;
   statusCode: number | null;
   durationMs: number;
+  responseHeadersMs: number;
+  responseBodyMs: number;
+  responseBytes: number;
   success: boolean;
   cancelled: boolean;
   error: string;
@@ -1085,6 +1095,7 @@ export type LibraryAssetCard = {
   id: string;
   title: string;
   name: string;
+  prompt?: string;
   thumbnailUrl: string;
   mimeType: string;
   size: number;
@@ -1195,7 +1206,7 @@ export type ImageJob = {
   resultImageId: string | null;
   completedImageCount?: number;
   requestedImageCount?: number;
-  phase?: "generating" | "supplementing";
+  phase?: "generating" | "persisting" | "supplementing";
   clientRequestId?: string;
   branchId?: string;
   parentBranchId?: string;
@@ -1273,6 +1284,7 @@ export type AssetItem = {
   id: string;
   space: "private" | "shared";
   name: string;
+  prompt?: string;
   url: string;
   originalUrl?: string;
   previewUrl?: string;
@@ -1294,4 +1306,47 @@ export type AssetItem = {
   categoryNames: string[];
   temporary?: boolean;
   dataUrl?: string;
+  processingState?: "reading" | "uploading" | "ready";
+};
+
+export type VideoProviderConfig = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  baseUrl: string;
+  apiKeyEnv: string;
+  apiKeyValue: string;
+  model: string;
+  protocol?: "veo_videos" | "grok_videos";
+  proxyEnabled: boolean;
+};
+
+export type VideoProviderPrice = {
+  duration: 4 | 6 | 8;
+  priceCents: number;
+};
+
+export type VideoProviderOption = VideoProviderConfig & {
+  prices: VideoProviderPrice[];
+};
+
+export type VideoJob = {
+  id: string;
+  providerId: string;
+  model: string;
+  mode: "text" | "image" | "frames" | "reference" | "edit" | "extension";
+  prompt: string;
+  negativePrompt: string;
+  duration: 4 | 6 | 8;
+  aspectRatio: "16:9" | "9:16";
+  generateAudio: boolean;
+  inputImages: string[];
+  status: "queued" | "in_progress" | "completed" | "failed" | "cancelled";
+  progress: number;
+  error: string;
+  amountCents: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string;
+  videoUrl: string;
 };

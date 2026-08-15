@@ -39,6 +39,7 @@ export function BillingAccountPanel({ active, embedded = false }: { active: bool
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["billing-account"] })
   });
   const records = recordView === "orders" ? account.data?.orders ?? [] : account.data?.ledger ?? [];
+  const enabledImagePrices = (account.data?.prices ?? []).filter((price) => Boolean(price.enabled));
   const pageCount = Math.max(1, Math.ceil(records.length / RECORDS_PER_PAGE));
   const visibleRecords = useMemo(
     () => records.slice(recordPage * RECORDS_PER_PAGE, (recordPage + 1) * RECORDS_PER_PAGE),
@@ -103,7 +104,7 @@ export function BillingAccountPanel({ active, embedded = false }: { active: bool
               ) : <div className="billing-disabled">管理员尚未开启在线支付</div>}
               <div className="billing-orders billing-price-list">
                 <h3>生图模型价格</h3>
-                {(account.data?.prices ?? []).length === 0 ? <p>暂无可用模型价格</p> : (account.data?.prices ?? []).map((price) => <div key={price.model}><span>{price.model}</span><small>¥{(price.price_cents / 100).toFixed(2)} / 张</small></div>)}
+                {enabledImagePrices.length === 0 ? <p>暂无可用模型价格</p> : enabledImagePrices.map((price) => <div key={`${price.provider_id}:${price.model}`}><span>{price.model}<small>{price.provider_id ? price.provider_name || price.provider_id : "通用渠道"}</small></span><small>¥{(price.price_cents / 100).toFixed(2)} / 张</small></div>)}
               </div>
               <div className="billing-orders billing-price-list">
                 <h3>文字模型价格</h3>

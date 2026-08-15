@@ -33,6 +33,9 @@ export function logProviderRequest(input: {
   isRetry?: boolean;
   statusCode: number | null;
   durationMs: number;
+  responseHeadersMs?: number;
+  responseBodyMs?: number;
+  responseBytes?: number;
   success: boolean;
   error?: string;
   sourceAccountId?: string;
@@ -44,8 +47,10 @@ export function logProviderRequest(input: {
     `insert into provider_request_logs (
       id, provider_id, provider_name, channel, route_mode, operation,
       job_id, attempt_no, max_attempts, is_retry,
-      source_account_id, user_id, endpoint, status_code, duration_ms, success, cancelled, error, created_at
-    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      source_account_id, user_id, endpoint, status_code, duration_ms,
+      response_headers_ms, response_body_ms, response_bytes,
+      success, cancelled, error, created_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     makeId("req"),
     input.provider.id,
     input.provider.name,
@@ -61,6 +66,9 @@ export function logProviderRequest(input: {
     input.endpoint,
     input.statusCode,
     Math.max(0, Math.round(input.durationMs)),
+    Math.max(0, Math.round(input.responseHeadersMs ?? 0)),
+    Math.max(0, Math.round(input.responseBodyMs ?? 0)),
+    Math.max(0, Math.round(input.responseBytes ?? 0)),
     input.success ? 1 : 0,
     cancelled ? 1 : 0,
     input.error ?? null,

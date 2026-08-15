@@ -5,7 +5,7 @@ import {
   requestPromptProviderText,
   shouldRetryWithResponses
 } from "./promptModelTransport";
-import type { PromptOptimizerProviderRow } from "./promptOptimizerRoutes";
+import { promptOptimizerRetryDelayMs, type PromptOptimizerProviderRow } from "./promptOptimizerRoutes";
 
 function provider(overrides: Partial<PromptOptimizerProviderRow> = {}): PromptOptimizerProviderRow {
   return {
@@ -134,4 +134,14 @@ test("falls back from Chat Completions to Responses", async () => {
 test("turns an internal abort into a readable timeout", () => {
   const error = promptModelRequestError(new DOMException("aborted", "AbortError"), true, 60_000, "图片续改建议模型");
   expect(error.message).toBe("图片续改建议模型请求超时（已等待 60 秒），请稍后重试");
+});
+
+test("uses exponential delay for retryable prompt model failures", () => {
+  expect(promptOptimizerRetryDelayMs(0)).toBe(1500);
+  expect(promptOptimizerRetryDelayMs(1)).toBe(3000);
+  expect(promptOptimizerRetryDelayMs(8)).toBe(15000);
+});
+
+test("honors Retry-After when the prompt model asks clients to wait", () => {
+  expect(promptOptimizerRetryDelayMs(0, new Response(null, { status: 503, headers: { "Retry-After": "7" } }))).toBe(7000);
 });

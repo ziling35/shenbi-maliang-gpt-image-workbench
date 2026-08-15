@@ -9,8 +9,10 @@ export const CPA_RESPONSES_MODEL_FALLBACK = "gpt-5.4-mini";
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 export const DEFAULT_REQUEST_SIZE = "auto";
 export const DEFAULT_IMAGE_RESULT_RETRY_COUNT = 1;
-export const DEFAULT_IMAGE_SIZES = ["1024x1024", "1536x2048", "1152x2048", "2048x1536", "2048x1152"];
+export const DEFAULT_IMAGE_SIZES = ["1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "5:4", "4:5", "21:9"];
 export const DEFAULT_IMAGE_QUALITIES = ["low", "medium", "high"];
+export const CUSTOM_IMAGE_DIMENSION_MIN = 64;
+export const CUSTOM_IMAGE_DIMENSION_MAX = 16384;
 export const LOGIN_ASSET_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".avif"]);
 export const AUTO_PROVIDER_ID = "auto";
 export const STUDIO_BACKEND_BASE_URL = "https://chatgpt.com/backend-api";
@@ -22,6 +24,25 @@ export const STUDIO_LEGACY_USER_AGENT =
 export function requestImageSize(value: unknown) {
   const size = String(value ?? "").trim();
   return size || DEFAULT_REQUEST_SIZE;
+}
+
+export function customImageDimensions(value: unknown) {
+  const match = String(value ?? "").trim().match(/^(\d+)x(\d+)$/i);
+  if (!match) return null;
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
+export function imageRequestSizeError(value: unknown) {
+  const text = String(value ?? "").trim();
+  const dimensions = customImageDimensions(text);
+  if (!dimensions) return "";
+  if (dimensions.width < CUSTOM_IMAGE_DIMENSION_MIN || dimensions.height < CUSTOM_IMAGE_DIMENSION_MIN) {
+    return `自定义分辨率不能小于 ${CUSTOM_IMAGE_DIMENSION_MIN}×${CUSTOM_IMAGE_DIMENSION_MIN}`;
+  }
+  if (dimensions.width > CUSTOM_IMAGE_DIMENSION_MAX || dimensions.height > CUSTOM_IMAGE_DIMENSION_MAX) {
+    return `自定义分辨率不能超过 ${CUSTOM_IMAGE_DIMENSION_MAX}×${CUSTOM_IMAGE_DIMENSION_MAX}`;
+  }
+  return "";
 }
 
 export function requestImageCount(value: unknown) {

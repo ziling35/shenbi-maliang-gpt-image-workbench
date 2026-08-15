@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WheelEvent as ReactWheelEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BrushCleaning, Check, Search, X } from "lucide-react";
+import { BrushCleaning, Check, Search, Upload, X } from "lucide-react";
 import { api } from "../api";
 import { useCursorLibraryQuery } from "../hooks/useCursorLibraryQuery";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
@@ -9,6 +9,7 @@ import { useInfinitePageLoader } from "../hooks/useInfinitePageLoader";
 import { useI18n } from "../i18n";
 import { assetSpaceLabel } from "../lib/assets";
 import { cx } from "../lib/cx";
+import { imageFilesFromList } from "../lib/uploadFiles";
 import type { AssetItem, LibraryAssetCard } from "../types";
 import { CheckerboardImage } from "./CheckerboardImage";
 import { VirtualizedResponsiveGrid } from "./VirtualizedResponsiveGrid";
@@ -102,6 +103,7 @@ export function MaterialPicker({
   const queryClient = useQueryClient();
   const { t } = useI18n();
   const [keyword, setKeyword] = useState("");
+  const [dragActive, setDragActive] = useState(false);
   const debouncedKeyword = useDebouncedValue(keyword, 250);
   const [selectedTagKey, setSelectedTagKey] = useState("");
   const materialTagFilterRef = useRef<HTMLDivElement | null>(null);
@@ -145,12 +147,25 @@ export function MaterialPicker({
     gcTime: 10 * 60_000
   });
   const upload = useMutation({
-    mutationFn: (form: FormData) => api.uploadAsset(form),
-    onSuccess: (result) => {
-      onSelectedAssetsChange([...selectedAssets, result.asset]);
+    mutationFn: async (files: File[]) => {
+      const results = await Promise.all(files.map(async (file) => {
+        const form = new FormData();
+        form.set("file", file);
+        form.set("space", "private");
+        return api.uploadAsset(form);
+      }));
+      return results.map((result) => result.asset);
+    },
+    onSuccess: (uploadedAssets) => {
+      const selectedIds = new Set(selectedAssets.map((asset) => asset.id));
+      onSelectedAssetsChange([...selectedAssets, ...uploadedAssets.filter((asset) => !selectedIds.has(asset.id))]);
       queryClient.invalidateQueries({ queryKey: ["assets"] });
     }
   });
+  const uploadFiles = (files: FileList | File[]) => {
+    const imageFiles = imageFilesFromList(files);
+    if (imageFiles.length > 0 && !upload.isPending) upload.mutate(imageFiles);
+  };
   const loadedSharedAssets = useMemo(
     () => (sharedAssets.data?.pages.flatMap((page) => page.items) ?? []).map(materialCardToAsset),
     [sharedAssets.data?.pages]
@@ -309,7 +324,24 @@ export function MaterialPicker({
     element.scrollLeft += delta;
   };
   return (
-    <div className="material-picker" data-state={closing ? "closing" : "open"}>
+    <div
+      className={cx("material-picker", dragActive && "is-drag-active")}
+      data-state={closing ? "closing" : "open"}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragActive(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) setDragActive(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragActive(false);
+        uploadFiles(event.dataTransfer.files);
+      }}
+    >
+      {dragActive ? <div className="material-drop-overlay"><Upload size={22} /><strong>{t("materialPicker.dropToUpload")}</strong><small>{t("materialPicker.dropToUploadDesc")}</small></div> : null}
       <div className="material-head">
         <div className="material-title-row">
           <strong>{t("materialPicker.title")}</strong>
@@ -349,13 +381,9 @@ export function MaterialPicker({
             <input
               type="file"
               accept="image/*"
+              multiple
               onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                const form = new FormData();
-                form.set("file", file);
-                form.set("space", "private");
-                upload.mutate(form);
+                uploadFiles(event.target.files ?? []);
                 event.target.value = "";
               }}
             />

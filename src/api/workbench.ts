@@ -44,6 +44,8 @@ import type {
   User,
   UserPreferences,
   WorkImage
+  ,VideoJob
+  ,VideoProviderOption
 } from "../types";
 import { ApiError, request } from "./client";
 import type { AppearanceMode } from "../lib/appearance";
@@ -103,6 +105,7 @@ export type GenerateImagePayload = {
   prompt: string;
   language?: string;
   size?: string;
+  resolutionTier?: "1K" | "2K" | "4K";
   quality?: string;
   n?: number;
   background?: "auto" | "opaque" | "transparent";
@@ -231,6 +234,7 @@ export type ComposerSettings = {
   providerId: string;
   imageCount: number;
   size: string;
+  resolutionTier: "1K" | "2K" | "4K";
   quality: string;
   promptOptimizerModel: string;
   promptInputOptimizeStyle: string;
@@ -645,7 +649,7 @@ export type ExternalMcpConnection = {
 export const api = {
   guestWorkbenchConfig: () => request<GuestWorkbenchConfig>("/api/guest-workbench-config"),
   promptOptimizerModels: (usage: "prompt.optimize" | "template.optimize" = "prompt.optimize") => request<PromptOptimizerModelCatalog>(`/api/prompt-optimizer/models?usage=${encodeURIComponent(usage)}`),
-  billingAccount: () => request<{ balanceCents: number; payment: { enabled: boolean; paymentTypes: string[]; minimumRechargeCents: number }; prices: Array<{ model: string; price_cents: number }>; textPrices:Array<{model:string;price_cents:number}>; orders: Array<{ id: string; amount_cents: number; status: string; payment_type: string; created_at: string; paid_at: string | null }>; ledger: Array<{ id: string; type: string; amount_cents: number; balance_after_cents: number; description: string; created_at: string }> }>("/api/billing/account"),
+  billingAccount: () => request<{ balanceCents: number; payment: { enabled: boolean; paymentTypes: string[]; minimumRechargeCents: number }; prices: Array<{ provider_id: string; provider_name?: string; model: string; price_cents: number; enabled: number }>; textPrices:Array<{model:string;price_cents:number}>; orders: Array<{ id: string; amount_cents: number; status: string; payment_type: string; created_at: string; paid_at: string | null }>; ledger: Array<{ id: string; type: string; amount_cents: number; balance_after_cents: number; description: string; created_at: string }> }>("/api/billing/account"),
   createRecharge: (payload: { amount: number; type: string }) => request<{ orderId: string; paymentUrl: string }>("/api/billing/recharge", { method: "POST", body: JSON.stringify(payload) }),
   me: () => request<{ user: User | null }>("/api/auth/me"),
   aiClientInstallLinks: () => request<AiClientInstallLinks>("/ai-client-install/links.json"),
@@ -749,6 +753,19 @@ export const api = {
     }),
   avatarHistory: () => request<{ entries: AvatarHistoryEntry[] }>("/api/auth/avatar-history"),
   providers: () => request<{ providers: ProviderConfig[]; imageMode: ImageGenerationMode }>("/api/providers"),
+  videoProviders: () => request<{ providers: VideoProviderOption[] }>("/api/video/providers"),
+  videos: () => request<{ jobs: VideoJob[] }>("/api/videos"),
+  createVideo: (payload: {
+    providerId: string;
+    mode: VideoJob["mode"];
+    prompt: string;
+    negativePrompt?: string;
+    duration: VideoJob["duration"];
+    aspectRatio: VideoJob["aspectRatio"];
+    generateAudio: boolean;
+    imageUrls: string[];
+    videoUrl?: string;
+  }) => request<{ job: VideoJob }>("/api/videos", { method: "POST", body: JSON.stringify(payload) }),
   starterCopiesToday: (language?: string, init?: RequestInit) =>
     request<StarterDailyCopy>(`/api/starter-copies/today${queryString({ language })}`, init),
   changelog: (params?: Pick<PageQuery, "limit" | "offset" | "keyword">) =>

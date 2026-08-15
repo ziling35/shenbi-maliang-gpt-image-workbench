@@ -5,7 +5,7 @@ import { appDb, configDb, getAll, getOne, run } from "./db";
 import { storedSitePublicBaseUrl } from "./siteSettings";
 import { makeId, now } from "./utils";
 
-type ModelPrice = { model: string; price_cents: number; enabled: number; updated_at: string };
+type ModelPrice = { provider_id: string; provider_name?: string; model: string; price_cents: number; enabled: number; updated_at: string };
 type TextModelPrice = { model: string; price_cents: number; enabled: number; updated_at: string };
 type EpayRow = { enabled: number; api_url: string; merchant_id: string; merchant_key: string; payment_types: string; minimum_recharge_cents: number; updated_at: string };
 
@@ -30,17 +30,24 @@ function secureEqual(left: string, right: string) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function reserveImageCharge(userId: string, jobId: string, model: string, imageCount: number, referenceId = jobId) {
-  const price = getOne<ModelPrice>(configDb, "select * from billing_model_prices where model = ? and enabled = 1", model);
-  if (!price) throw new Error(`模型 ${model} 尚未配置价格`);
+function resolveImageModelPrice(providerId: string, model: string) {
+  const providerPrice = getOne<ModelPrice>(configDb, "select * from billing_model_prices where provider_id = ? and model = ?", providerId, model);
+  if (providerPrice) return providerPrice.enabled ? providerPrice : null;
+  const generalPrice = getOne<ModelPrice>(configDb, "select * from billing_model_prices where provider_id = '' and model = ?", model);
+  return generalPrice?.enabled ? generalPrice : null;
+}
+
+export function reserveImageCharge(userId: string, jobId: string, providerId: string, model: string, imageCount: number, referenceId = jobId) {
+  const price = resolveImageModelPrice(providerId, model);
+  if (!price) throw new Error(`渠道 ${providerId} 的模型 ${model} 尚未配置可用价格`);
   const amount = price.price_cents * imageCount;
   appDb.exec("begin immediate");
   try {
     const changed = run(appDb, "update users set balance_cents = balance_cents - ?, updated_at = ? where id = ? and balance_cents >= ?", amount, now(), userId, amount);
     if (!Number(changed.changes ?? 0)) throw new Error("余额不足，请先充值");
     const balance = getOne<{ balance_cents: number }>(appDb, "select balance_cents from users where id = ?", userId)?.balance_cents ?? 0;
-    run(appDb, `insert into billing_reservations(job_id,user_id,model,image_count,amount_cents,status,created_at,updated_at) values(?,?,?,?,?,'reserved',?,?) on conflict(job_id) do update set model=excluded.model,image_count=excluded.image_count,amount_cents=excluded.amount_cents,status='reserved',updated_at=excluded.updated_at`, jobId, userId, model, imageCount, amount, now(), now());
-    run(appDb, "insert into billing_ledger(id,user_id,type,amount_cents,balance_after_cents,reference_id,description,created_at) values(?,?,?,?,?,?,?,?)", makeId("ledger"), userId, "consume", -amount, balance, referenceId, `${model} x ${imageCount}`, now());
+    run(appDb, `insert into billing_reservations(job_id,user_id,provider_id,model,image_count,amount_cents,status,created_at,updated_at) values(?,?,?,?,?,?,'reserved',?,?) on conflict(job_id) do update set provider_id=excluded.provider_id,model=excluded.model,image_count=excluded.image_count,amount_cents=excluded.amount_cents,status='reserved',updated_at=excluded.updated_at`, jobId, userId, providerId, model, imageCount, amount, now(), now());
+    run(appDb, "insert into billing_ledger(id,user_id,type,amount_cents,balance_after_cents,reference_id,description,created_at) values(?,?,?,?,?,?,?,?)", makeId("ledger"), userId, "consume", -amount, balance, referenceId, `${model} · ${providerId} x ${imageCount}`, now());
     appDb.exec("commit");
     return amount;
   } catch (error) { appDb.exec("rollback"); throw error; }
@@ -120,6 +127,36 @@ export function refundTextModelCharge(reservationId: string | null | undefined) 
   }
 }
 
+export function reserveVideoCharge(userId: string, jobId: string, providerId: string, model: string, duration: number) {
+  const price = getOne<{ price_cents: number; enabled: number }>(configDb, "select price_cents,enabled from billing_video_model_prices where provider_id=? and model=? and duration=?", providerId, model, duration);
+  if (!price?.enabled) throw new Error(`视频渠道 ${providerId} 的 ${model} / ${duration} 秒尚未配置价格`);
+  const amount = Math.max(0, price.price_cents);
+  if (amount === 0) return 0;
+  appDb.exec("begin immediate");
+  try {
+    const changed = run(appDb, "update users set balance_cents=balance_cents-?,updated_at=? where id=? and balance_cents>=?", amount, now(), userId, amount);
+    if (!Number(changed.changes ?? 0)) throw new Error("余额不足，请先充值");
+    const balance = getOne<{ balance_cents: number }>(appDb, "select balance_cents from users where id=?", userId)?.balance_cents ?? 0;
+    run(appDb, "insert into billing_ledger(id,user_id,type,amount_cents,balance_after_cents,reference_id,description,created_at) values(?,?,?,?,?,?,?,?)", makeId("ledger"), userId, "consume", -amount, balance, jobId, `${model} 视频 ${duration} 秒`, now());
+    appDb.exec("commit");
+    return amount;
+  } catch (error) { appDb.exec("rollback"); throw error; }
+}
+
+export function refundVideoCharge(jobId: string) {
+  appDb.exec("begin immediate");
+  try {
+    const job = getOne<{ user_id: string; amount_cents: number; status: string; model: string }>(appDb, "select user_id,amount_cents,status,model from video_jobs where id=?", jobId);
+    if (!job || job.amount_cents <= 0 || job.status === "refunded") { appDb.exec("commit"); return 0; }
+    run(appDb, "update users set balance_cents=balance_cents+?,updated_at=? where id=?", job.amount_cents, now(), job.user_id);
+    const balance = getOne<{ balance_cents: number }>(appDb, "select balance_cents from users where id=?", job.user_id)?.balance_cents ?? 0;
+    run(appDb, "insert or ignore into billing_ledger(id,user_id,type,amount_cents,balance_after_cents,reference_id,description,created_at) values(?,?,?,?,?,?,?,?)", `video_refund_${jobId}`, job.user_id, "refund", job.amount_cents, balance, jobId, `${job.model} 视频生成失败退款`, now());
+    run(appDb, "update video_jobs set amount_cents=0,updated_at=? where id=?", now(), jobId);
+    appDb.exec("commit");
+    return job.amount_cents;
+  } catch (error) { appDb.exec("rollback"); throw error; }
+}
+
 function creditOrder(orderId: string, tradeNo: string) {
   appDb.exec("begin immediate");
   try {
@@ -163,7 +200,9 @@ export function registerBillingRoutes(api: Hono) {
     const current = getOne<{ balance_cents: number }>(appDb, "select balance_cents from users where id = ?", user.id);
     const orders = getAll(appDb, "select id,amount_cents,status,payment_type,created_at,paid_at from recharge_orders where user_id=? order by created_at desc limit 20", user.id);
     const ledger = getAll(appDb, "select id,type,amount_cents,balance_after_cents,description,created_at from billing_ledger where user_id=? order by created_at desc,id desc limit 30", user.id);
-    const prices = getAll<ModelPrice>(configDb, "select model,price_cents,enabled,updated_at from billing_model_prices where enabled=1 order by model");
+    const prices = getAll<ModelPrice>(configDb, `select prices.provider_id,providers.name as provider_name,prices.model,prices.price_cents,prices.enabled,prices.updated_at
+      from billing_model_prices prices left join provider_configs providers on providers.id=prices.provider_id
+      order by prices.model,prices.provider_id`);
     const textPrices = getAll<TextModelPrice>(configDb, "select model,price_cents,enabled,updated_at from billing_text_model_prices where enabled=1 order by model");
     const payment = epaySettings();
     return c.json({
@@ -217,7 +256,7 @@ export function registerBillingRoutes(api: Hono) {
   });
   api.get("/config/billing", (c) => {
     const blocked = requireConfig(c); if (blocked) return blocked;
-    return c.json({ prices: getAll(configDb, "select model,price_cents,enabled,updated_at from billing_model_prices order by model"), textPrices: getAll(configDb, "select model,price_cents,enabled,updated_at from billing_text_model_prices order by model"), epay: epaySettings(), users: getAll(appDb, "select id,account,username,balance_cents from users order by created_at desc") });
+    return c.json({ prices: getAll(configDb, "select provider_id,model,price_cents,enabled,updated_at from billing_model_prices order by model,provider_id"), providers: getAll(configDb, "select id,name,model,enabled from provider_configs order by sort_order asc, created_at asc, rowid asc"), textPrices: getAll(configDb, "select model,price_cents,enabled,updated_at from billing_text_model_prices order by model"), epay: epaySettings(), users: getAll(appDb, "select id,account,username,balance_cents from users order by created_at desc") });
   });
   api.put("/config/billing", async (c) => {
     const blocked = requireConfig(c); if (blocked) return blocked;
@@ -226,7 +265,8 @@ export function registerBillingRoutes(api: Hono) {
     const textPrices = Array.isArray(body.textPrices) ? body.textPrices : [];
     configDb.exec("begin immediate"); try {
       run(configDb, "delete from billing_model_prices");
-      for (const item of prices) { const model=String(item.model??"").trim(); const cents=Math.round(Number(item.price)*100); if(model&&Number.isSafeInteger(cents)&&cents>=0) run(configDb,"insert into billing_model_prices(model,price_cents,enabled,updated_at) values(?,?,?,?)",model,cents,item.enabled===false?0:1,timestamp); }
+      const priceKeys = new Set<string>();
+      for (const item of prices) { const providerId=String(item.providerId??item.provider_id??"").trim(); const model=String(item.model??"").trim(); const cents=Math.round(Number(item.price)*100); if(model&&Number.isSafeInteger(cents)&&cents>=0) { const key=`${providerId}\u0000${model}`; if(priceKeys.has(key)) throw new Error(`价格配置重复：${providerId || "通用渠道"} / ${model}`); priceKeys.add(key); run(configDb,"insert into billing_model_prices(provider_id,model,price_cents,enabled,updated_at) values(?,?,?,?,?)",providerId,model,cents,item.enabled===false?0:1,timestamp); } }
       run(configDb, "delete from billing_text_model_prices");
       for (const item of textPrices) { const model=String(item.model??"").trim(); const cents=Math.round(Number(item.price)*100); if(model&&Number.isSafeInteger(cents)&&cents>=0) run(configDb,"insert into billing_text_model_prices(model,price_cents,enabled,updated_at) values(?,?,?,?)",model,cents,item.enabled===false?0:1,timestamp); }
       const epay=body.epay??{}; const existing=epaySettings(true); const key=String(epay.merchantKey??"")==="********"?existing.merchantKey:String(epay.merchantKey??"");

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FolderOpen, Pencil, Plus, Search, Send, Share2, Trash2, X } from "lucide-react";
+import { FolderOpen, MessageSquareText, Pencil, Plus, Search, Send, Share2, Trash2, Upload, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { AssetEditModal } from "../components/AssetEditModal";
@@ -10,6 +10,7 @@ import { ImageDownloadMenu } from "../components/ImageDownloadMenu";
 import { ImagePreviewModal, type ImageTransparencyStatus } from "../components/ImagePreviewModal";
 import { LibraryEmptyState } from "../components/LibraryEmptyState";
 import { PageHeader } from "../components/PageHeader";
+import { PromptViewerDialog } from "../components/PromptViewerDialog";
 import { SearchHistoryInput } from "../components/SearchHistoryInput";
 import { SkeletonImage } from "../components/SkeletonImage";
 import { ScrollJumpButton } from "../components/ScrollJumpButton";
@@ -17,6 +18,7 @@ import { VirtualizedResponsiveGrid } from "../components/VirtualizedResponsiveGr
 import { useI18n } from "../i18n";
 import { assetSpaceLabel, type AssetUploadMode } from "../lib/assets";
 import { cx } from "../lib/cx";
+import { imageFilesFromList } from "../lib/uploadFiles";
 import { imageCreatedTime } from "../lib/imageTimeline";
 import { IMAGE_PAGE_SIZE } from "../lib/pagination";
 import { resolvePendingPreviewRequest, type PendingPreviewRequest } from "../lib/paginatedPreviewNavigation";
@@ -76,9 +78,12 @@ export function AssetsPage({
   const [keyword, setKeyword] = useState(() => urlKeyword);
   const debouncedKeyword = useDebouncedValue(keyword, 250);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [dragActive, setDragActive] = useState(false);
   const [tagDialogOpen, setTagDialogOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AssetItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AssetItem | null>(null);
+  const [promptAsset, setPromptAsset] = useState<AssetItem | null>(null);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [pendingPreviewRequest, setPendingPreviewRequest] = useState<PendingPreviewRequest | null>(null);
   const [filterDisplayMode, setFilterDisplayMode] = useLibraryFilterDisplayMode();
@@ -352,8 +357,9 @@ export function AssetsPage({
   const toggleAssetCategory = (categoryId: string) => {
     setSelectedCategoryIds((value) => (value.includes(categoryId) ? [] : [categoryId]));
   };
-  const openUploadModal = () => {
+  const openUploadModal = (files: File[] = []) => {
     upload.reset();
+    setUploadFiles(imageFilesFromList(files));
     setUploadOpen(true);
   };
   const clearAssetFilters = () => {
@@ -476,7 +482,24 @@ export function AssetsPage({
   }, [clearOpenAsset, openAsset.isError, openAssetId, showToast, t]);
 
   return (
-    <section className="page-section">
+    <section
+      className={cx("page-section", dragActive && "is-drag-active")}
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragActive(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={(event) => {
+        if (event.currentTarget === event.target) setDragActive(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragActive(false);
+        const files = imageFilesFromList(event.dataTransfer.files);
+        if (files.length > 0) openUploadModal(files);
+      }}
+    >
+      {dragActive ? <div className="asset-page-drop-overlay"><Upload size={28} /><strong>{t("pages.assets.dropToUpload")}</strong><span>{t("pages.assets.dropToUploadDesc")}</span></div> : null}
       <PageHeader
         title={t("pages.assets.title")}
         desc={t(assetReviewEnabled ? "pages.assets.desc" : "pages.assets.descNoReview")}
@@ -534,7 +557,7 @@ export function AssetsPage({
             <Plus size={16} />
             {t("pages.assets.addTag")}
           </button>
-          <button className="upload-btn" type="button" onClick={openUploadModal}>
+          <button className="upload-btn" type="button" onClick={() => openUploadModal()}>
             <Plus size={16} />
             {t("pages.assets.upload")}
           </button>
@@ -565,6 +588,9 @@ export function AssetsPage({
               <div className="asset-card-actions">
                 <button type="button" onClick={() => useAssetInNewChat(asset)} aria-label={t("pages.assets.useAsset")} title={t("pages.assets.useAsset")}>
                   <Send size={16} />
+                </button>
+                <button type="button" onClick={() => setPromptAsset(asset)} disabled={!asset.prompt?.trim()} aria-label={t("pages.assets.viewPrompt")} title={t("pages.assets.viewPrompt")}>
+                  <MessageSquareText size={16} />
                 </button>
                 {asset.canEdit ? (
                   <>
@@ -625,7 +651,7 @@ export function AssetsPage({
             title={t("pages.assets.empty")}
             description={t("pages.assets.emptyDesc")}
             action={
-              <button className="primary-btn" type="button" onClick={openUploadModal}>
+              <button className="primary-btn" type="button" onClick={() => openUploadModal()}>
                 <Plus size={16} />
                 {t("pages.assets.upload")}
               </button>
@@ -659,6 +685,9 @@ export function AssetsPage({
             <>
               <button className="case-preview-tool" type="button" onClick={() => useAssetInNewChat(item)} aria-label={t("pages.assets.useAsset")} title={t("pages.assets.useAsset")}>
                 <Send size={16} />
+              </button>
+              <button className="case-preview-tool" type="button" onClick={() => setPromptAsset(item)} disabled={!item.prompt?.trim()} aria-label={t("pages.assets.viewPrompt")} title={t("pages.assets.viewPrompt")}>
+                <MessageSquareText size={16} />
               </button>
               {item.canEdit ? (
                 <>
@@ -703,6 +732,7 @@ export function AssetsPage({
         <AssetUploadModal
           categories={categories}
           initialCategoryIds={selectedCategoryIds}
+          initialFiles={uploadFiles}
           assetReviewEnabled={assetReviewEnabled}
           pending={upload.isPending}
           error={upload.error instanceof Error ? upload.error : null}
@@ -710,6 +740,7 @@ export function AssetsPage({
           onUpload={(payload) => upload.mutate(payload)}
         />
       ) : null}
+      {promptAsset?.prompt ? <PromptViewerDialog prompt={promptAsset.prompt} onClose={() => setPromptAsset(null)} /> : null}
       {editTarget ? (
         <AssetEditModal
           asset={editTarget}

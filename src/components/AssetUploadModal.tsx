@@ -4,6 +4,7 @@ import { useI18n } from "../i18n";
 import { ASSET_UPLOAD_MODE_OPTIONS, assetUploadModeI18nKey, type AssetUploadMode } from "../lib/assets";
 import { cx } from "../lib/cx";
 import { formatImageFileSize } from "../lib/format";
+import { imageFilesFromList } from "../lib/uploadFiles";
 import { ModalPortal } from "../ui";
 import type { CaseCategory } from "../types";
 import { CaseCategoryMultiSelect } from "./CaseCategoryMultiSelect";
@@ -16,7 +17,8 @@ export function AssetUploadModal({
   pending,
   error,
   onClose,
-  onUpload
+  onUpload,
+  initialFiles = []
 }: {
   categories: CaseCategory[];
   initialCategoryIds: string[];
@@ -25,10 +27,12 @@ export function AssetUploadModal({
   error: Error | null;
   onClose: () => void;
   onUpload: (payload: { files: File[]; spaceMode: AssetUploadMode; categoryIds: string[] }) => void;
+  initialFiles?: File[];
 }) {
   const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<File[]>(() => imageFilesFromList(initialFiles));
+  const [dragActive, setDragActive] = useState(false);
   const [previewItems, setPreviewItems] = useState<Array<{ file: File; url: string }>>([]);
   const [spaceMode, setSpaceMode] = useState<AssetUploadMode>("private");
   const [categoryIds, setCategoryIds] = useState<string[]>(initialCategoryIds);
@@ -47,6 +51,10 @@ export function AssetUploadModal({
     if (files.length === 0 || pending) return;
     onUpload({ files, spaceMode, categoryIds });
   };
+  const acceptFiles = (nextFiles: FileList | File[]) => {
+    const imageFiles = imageFilesFromList(nextFiles);
+    if (imageFiles.length > 0) setFiles(imageFiles);
+  };
   const uploadModeOptions = ASSET_UPLOAD_MODE_OPTIONS.map((option) => ({
     ...option,
     label: t(assetUploadModeI18nKey(option.value, "label", assetReviewEnabled)),
@@ -63,7 +71,23 @@ export function AssetUploadModal({
               <X size={18} />
             </button>
           </header>
-          <button className={cx("asset-file-card", files.length > 0 && "has-file")} type="button" onClick={() => fileInputRef.current?.click()}>
+          <button
+            className={cx("asset-file-card", files.length > 0 && "has-file", dragActive && "is-drag-active")}
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              setDragActive(true);
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={() => setDragActive(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragActive(false);
+              acceptFiles(event.dataTransfer.files);
+            }}
+          >
+            {dragActive ? <div className="asset-drop-hint"><ImageIcon size={28} /><strong>{t("pages.assets.dropToUpload")}</strong><small>{t("pages.assets.dropToUploadDesc")}</small></div> : null}
             {previewItems.length > 0 ? (
               <div className="asset-file-list">
                 {previewItems.map(({ file: item, url }, index) => (
@@ -91,7 +115,7 @@ export function AssetUploadModal({
               accept="image/*"
               multiple
               onChange={(event) => {
-                setFiles(Array.from(event.target.files ?? []));
+                acceptFiles(event.target.files ?? []);
                 event.target.value = "";
               }}
             />

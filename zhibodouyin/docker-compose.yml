@@ -1,0 +1,11 @@
+services:
+  lingtu-ai-live-director:
+    build: .
+    container_name: lingtu-ai-live-director
+    restart: unless-stopped
+    ports:
+      - "8790:8790"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data

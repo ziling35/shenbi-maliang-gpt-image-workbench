@@ -9,6 +9,7 @@ export type SubmitRequest = {
   prompt: string;
   language?: string;
   size?: string;
+  resolutionTier?: "1K" | "2K" | "4K";
   quality?: string;
   n?: number;
   caseItemId?: string;

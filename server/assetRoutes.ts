@@ -113,10 +113,12 @@ function publicAsset(row: AssetRow, categoryMap: Map<string, Array<{ id: string;
   const shareStatus = normalizeAssetShareStatus(row.share_status);
   const shared = shareStatus === "approved" && (space === "shared" || Boolean(row.shared));
   const originalUrl = assetUrlFromAssetId(row.id);
+  const sourceImage = getOne<{ prompt: string }>(appDb, "select prompt from images where path = ? order by created_at desc limit 1", row.path);
   return {
     id: row.id,
     space,
     name: row.name,
+    prompt: sourceImage?.prompt ?? "",
     url: originalUrl,
     originalUrl,
     previewUrl: assetUrlFromAssetId(row.id, "preview"),
