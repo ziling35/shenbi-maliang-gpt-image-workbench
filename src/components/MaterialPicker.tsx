@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { WheelEvent as ReactWheelEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BrushCleaning, Check, Search, Upload, X } from "lucide-react";
+import { BrushCleaning, Check, LoaderCircle, Search, Upload, X } from "lucide-react";
 import { api } from "../api";
 import { useCursorLibraryQuery } from "../hooks/useCursorLibraryQuery";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
@@ -146,20 +146,37 @@ export function MaterialPicker({
     staleTime: 30_000,
     gcTime: 10 * 60_000
   });
+  const [uploadProgress, setUploadProgress] = useState({ completed: 0, total: 0 });
+  const [uploadNotice, setUploadNotice] = useState("");
   const upload = useMutation({
     mutationFn: async (files: File[]) => {
-      const results = await Promise.all(files.map(async (file) => {
+      setUploadProgress({ completed: 0, total: files.length });
+      setUploadNotice("");
+      const results = await Promise.allSettled(files.map(async (file) => {
         const form = new FormData();
         form.set("file", file);
         form.set("space", "private");
-        return api.uploadAsset(form);
+        try {
+          return await api.uploadAsset(form);
+        } finally {
+          setUploadProgress((progress) => ({ ...progress, completed: Math.min(progress.total, progress.completed + 1) }));
+        }
       }));
-      return results.map((result) => result.asset);
+      const uploadedAssets = results
+        .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof api.uploadAsset>>> => result.status === "fulfilled")
+        .map((result) => result.value.asset);
+      const failedCount = results.length - uploadedAssets.length;
+      if (uploadedAssets.length === 0) throw new Error("图片上传失败，请稍后重试");
+      return { uploadedAssets, failedCount };
     },
-    onSuccess: (uploadedAssets) => {
+    onSuccess: ({ uploadedAssets, failedCount }) => {
       const selectedIds = new Set(selectedAssets.map((asset) => asset.id));
       onSelectedAssetsChange([...selectedAssets, ...uploadedAssets.filter((asset) => !selectedIds.has(asset.id))]);
       queryClient.invalidateQueries({ queryKey: ["assets"] });
+      setUploadNotice(failedCount > 0 ? `已上传 ${uploadedAssets.length} 张，${failedCount} 张失败` : `已上传 ${uploadedAssets.length} 张图片`);
+    },
+    onError: (error) => {
+      setUploadNotice(error instanceof Error ? error.message : "图片上传失败，请稍后重试");
     }
   });
   const uploadFiles = (files: FileList | File[]) => {
@@ -376,12 +393,16 @@ export function MaterialPicker({
           </label>
         </div>
         <div className="material-head-actions">
-          <label className="upload-btn compact">
-            {t("materialPicker.localUpload")}
+          {upload.isPending ? (
+            <span className="material-upload-status" role="status"><LoaderCircle size={14} className="spin" />{t("common.uploading")} {uploadProgress.completed}/{uploadProgress.total}</span>
+          ) : uploadNotice ? <span className={cx("material-upload-status", upload.isError && "is-error")} role="status">{uploadNotice}</span> : null}
+          <label className={cx("upload-btn compact material-upload-btn", upload.isPending && "is-uploading")} aria-busy={upload.isPending}>
+            {upload.isPending ? <><LoaderCircle size={14} className="spin" />{t("common.uploading")}</> : t("materialPicker.localUpload")}
             <input
               type="file"
               accept="image/*"
               multiple
+              disabled={upload.isPending}
               onChange={(event) => {
                 uploadFiles(event.target.files ?? []);
                 event.target.value = "";

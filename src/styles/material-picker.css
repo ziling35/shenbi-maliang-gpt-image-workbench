@@ -258,6 +258,37 @@
   font-size: 13px;
 }
 
+.material-upload-btn {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  justify-content: center;
+  min-width: 74px;
+  white-space: nowrap;
+}
+
+.material-upload-btn.is-uploading {
+  cursor: wait;
+  opacity: 0.78;
+  pointer-events: none;
+}
+
+.material-upload-status {
+  align-items: center;
+  color: var(--app-text-muted, #64748b);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 5px;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.material-upload-status.is-error {
+  color: #dc2626;
+}
+
 .material-title-row .material-search {
   width: clamp(104px, 11vw, 120px);
   max-width: 120px;
