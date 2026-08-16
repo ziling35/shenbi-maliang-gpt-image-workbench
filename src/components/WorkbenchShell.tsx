@@ -1450,12 +1450,43 @@ export function WorkbenchShell({ user }: { user: User }) {
     if (payload.imageMessage) {
       queryClient.setQueryData<{ messages: Message[] }>(["messages", sessionId], (current) => {
         if (!current) return current;
-        const imageMessage = payload.imageMessage!;
-        const pendingPreviewId = typeof imageMessage.metadata?.pendingPreviewId === "string"
-          ? imageMessage.metadata.pendingPreviewId
+        const incomingImageMessage = payload.imageMessage!;
+        const pendingPreviewId = typeof incomingImageMessage.metadata?.pendingPreviewId === "string"
+          ? incomingImageMessage.metadata.pendingPreviewId
           : "";
-        const nextMessages = pendingPreviewId
-          ? current.messages.filter((message) => message.id !== pendingPreviewId)
+        const pendingMessageIndex = pendingPreviewId
+          ? current.messages.findIndex((message) => message.id === pendingPreviewId)
+          : -1;
+        const pendingMessage = pendingMessageIndex >= 0 ? current.messages[pendingMessageIndex] : null;
+        const pendingPreviewUrl = pendingMessage?.imageOriginalUrl?.trim()
+          || pendingMessage?.imageUrl?.trim()
+          || (typeof incomingImageMessage.metadata?.pendingPreviewUrl === "string"
+            ? incomingImageMessage.metadata.pendingPreviewUrl.trim()
+            : "");
+        const pendingFallbackUrl = typeof pendingMessage?.metadata?.pendingFallbackUrl === "string"
+          ? pendingMessage.metadata.pendingFallbackUrl.trim()
+          : typeof incomingImageMessage.metadata?.pendingFallbackUrl === "string"
+            ? incomingImageMessage.metadata.pendingFallbackUrl.trim()
+            : "";
+        const imageMessage = pendingMessage && incomingImageMessage.metadata?.pendingImage !== true
+          ? {
+              ...incomingImageMessage,
+              metadata: {
+                ...incomingImageMessage.metadata,
+                ...(pendingPreviewUrl ? { pendingPreviewUrl } : {}),
+                ...(pendingFallbackUrl ? { pendingFallbackUrl } : {}),
+                pendingPreviewActive: true
+              }
+            }
+          : incomingImageMessage;
+        if (pendingMessageIndex >= 0 && imageMessage.metadata?.pendingImage !== true) {
+          appendedImageMessage = true;
+          const messages = [...current.messages];
+          messages[pendingMessageIndex] = imageMessage;
+          return { ...current, messages };
+        }
+        const nextMessages = pendingMessageIndex >= 0
+          ? current.messages.filter((_, index) => index !== pendingMessageIndex)
           : current.messages;
         const existingMessageIndex = nextMessages.findIndex((message) => message.id === imageMessage.id);
         if (existingMessageIndex >= 0) {
@@ -1480,7 +1511,12 @@ export function WorkbenchShell({ user }: { user: User }) {
         messages: current.messages.filter((message) => !(message.metadata?.pendingImage === true && message.metadata?.jobId === payload.jobId))
       } : current);
     }
-    if ((payload.status !== "running" || payload.resultImageId) && !appendedImageMessage) {
+    const cachedMessages = queryClient.getQueryData<{ messages: Message[] }>(["messages", sessionId]);
+    const resultMessageAlreadyCached = Boolean(
+      payload.resultImageId
+      && cachedMessages?.messages.some((message) => message.imageId === payload.resultImageId)
+    );
+    if ((payload.status !== "running" || payload.resultImageId) && !appendedImageMessage && !resultMessageAlreadyCached) {
       queryClient.invalidateQueries({ queryKey: ["messages", sessionId] });
     }
     if (payload.status !== "running") queryClient.invalidateQueries({ queryKey: ["images"] });

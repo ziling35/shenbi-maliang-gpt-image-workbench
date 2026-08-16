@@ -9,12 +9,19 @@ services:
       HOST: 0.0.0.0
       PORT: 8787
       APP_TRUST_PROXY: "true"
+      GPT_IMAGE_DATA_DIR: /app/data
     env_file:
       - .env
     ports:
       - "${MALIANG_BIND_ADDRESS:-127.0.0.1}:${MALIANG_PORT:-8787}:8787"
     volumes:
       - ./data:/app/data
+      - ./data/logs:/app/data/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "bun", "-e", "const response = await fetch('http://127.0.0.1:8787/api/health'); if (!response.ok) process.exit(1)"]
       interval: 30s

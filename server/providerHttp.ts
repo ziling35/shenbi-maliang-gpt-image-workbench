@@ -1,3 +1,6 @@
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { Readable } from "node:stream";
 import { IMAGE_JOB_RUNNING_TIMEOUT_MS, PROVIDER_REQUEST_TIMEOUT_ERROR } from "./constants";
 import { proxySettings, shouldUseProxy } from "./settingsStore";
 import type { ProviderRow } from "./types";
@@ -54,6 +57,64 @@ async function fetchWithConfiguredRetry(input: RequestInfo | URL, init: RequestI
 
 export async function providerFetch(provider: ProviderRow, input: RequestInfo | URL, init: RequestInit) {
   return fetchWithConfiguredRetry(input, init, shouldUseProxy(provider));
+}
+
+function nodeRequestHeaders(init: RequestInit) {
+  const headers: Record<string, string> = {};
+  if (init.headers instanceof Headers) {
+    init.headers.forEach((value, key) => { headers[key] = value; });
+  } else if (Array.isArray(init.headers)) {
+    for (const [key, value] of init.headers) headers[key] = value;
+  } else if (init.headers) {
+    for (const [key, value] of Object.entries(init.headers)) {
+      if (value !== undefined) headers[key] = String(value);
+    }
+  }
+  return headers;
+}
+
+export async function providerReliableStreamFetch(provider: ProviderRow, input: RequestInfo | URL, init: RequestInit) {
+  if (shouldUseProxy(provider)) return providerFetch(provider, input, init);
+  const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
+  const request = url.protocol === "http:" ? httpRequest : httpsRequest;
+  const headers = nodeRequestHeaders(init);
+  headers.Connection = headers.Connection || "close";
+  const body = typeof init.body === "string" ? init.body : init.body ? String(init.body) : "";
+
+  return new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const req = request(url, {
+      method: init.method || "GET",
+      headers,
+      signal: init.signal ?? undefined
+    }, (res) => {
+      if (settled) return;
+      settled = true;
+      const responseHeaders = new Headers();
+      for (const [key, value] of Object.entries(res.headers)) {
+        if (Array.isArray(value)) responseHeaders.set(key, value.join(", "));
+        else if (value !== undefined) responseHeaders.set(key, String(value));
+      }
+      resolve(new Response(Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>, {
+        status: res.statusCode || 502,
+        statusText: res.statusMessage || "",
+        headers: responseHeaders
+      }));
+    });
+    req.once("error", fail);
+    if (init.signal) {
+      const abort = () => req.destroy(new Error("请求已取消"));
+      if (init.signal.aborted) abort();
+      else init.signal.addEventListener("abort", abort, { once: true });
+    }
+    if (body) req.write(body);
+    req.end();
+  });
 }
 
 export async function proxyFetch(input: RequestInfo | URL, init: RequestInit) {

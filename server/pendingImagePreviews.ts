@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import sharp from "sharp";
 import { providerImagePreviewItems, type ProviderImagePreviewItem } from "./imageFiles";
 import type { ProviderRow } from "./types";
 
@@ -11,6 +12,7 @@ type PendingImagePreview = {
   previewId: string;
   userId: string;
   jobId: string;
+  imageIndex: number;
   mimeType: string;
   buffer?: Buffer;
   remoteUrl?: string;
@@ -24,6 +26,12 @@ type PendingImageLiveStream = {
   controllers: Set<ReadableStreamDefaultController<Uint8Array>>;
   done: boolean;
   failed: boolean;
+  bytesReceived: number;
+  frameBuffer?: Buffer;
+  frameVersion: number;
+  frameRendering: boolean;
+  lastFrameBytes: number;
+  lastFrameAt: number;
 };
 
 export type CreatedPendingImagePreview = {
@@ -34,10 +42,53 @@ export type CreatedPendingImagePreview = {
 };
 
 export type PendingImagePreviewStreamWriter = CreatedPendingImagePreview & {
+  setMimeType: (mimeType: string) => void;
   write: (chunk: Uint8Array) => void;
   finish: () => void;
   fail: () => void;
 };
+
+export type ActivePendingImagePreview = {
+  previewId: string;
+  jobId: string;
+  imageIndex: number;
+  url: string;
+  fallbackUrl: string;
+  mimeType: string;
+  streaming: boolean;
+};
+
+const PROGRESSIVE_FRAME_INITIAL_BYTES = 128 * 1024;
+const PROGRESSIVE_FRAME_STEP_BYTES = 2 * 1024 * 1024;
+const PROGRESSIVE_FRAME_INTERVAL_MS = 1200;
+
+function scheduleProgressiveFrame(liveStream: PendingImageLiveStream, force = false) {
+  if (liveStream.frameRendering || liveStream.bytesReceived < PROGRESSIVE_FRAME_INITIAL_BYTES) return;
+  const timestamp = Date.now();
+  if (!force
+    && liveStream.lastFrameBytes > 0
+    && liveStream.bytesReceived - liveStream.lastFrameBytes < PROGRESSIVE_FRAME_STEP_BYTES
+    && timestamp - liveStream.lastFrameAt < PROGRESSIVE_FRAME_INTERVAL_MS) return;
+  const sourceBytes = liveStream.bytesReceived;
+  const source = Buffer.concat(liveStream.chunks, sourceBytes);
+  liveStream.frameRendering = true;
+  liveStream.lastFrameBytes = sourceBytes;
+  liveStream.lastFrameAt = timestamp;
+  void sharp(source, { failOn: "none", sequentialRead: true })
+    .resize({ width: 1280, height: 1280, fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 82, progressive: true, mozjpeg: true })
+    .toBuffer()
+    .then((buffer) => {
+      if (buffer.length === 0) return;
+      liveStream.frameBuffer = buffer;
+      liveStream.frameVersion += 1;
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      liveStream.frameRendering = false;
+      if (!liveStream.done && liveStream.bytesReceived > sourceBytes) scheduleProgressiveFrame(liveStream);
+    });
+}
 
 function cleanupExpiredPendingPreviews() {
   const timestamp = Date.now();
@@ -97,6 +148,7 @@ export function createPendingImagePreviews(input: {
       previewId,
       userId: input.userId,
       jobId: input.jobId,
+      imageIndex: input.imageIndexStart + index,
       mimeType,
       buffer,
       remoteUrl,
@@ -127,13 +179,19 @@ export function createStreamingPendingImagePreview(input: {
     chunks: [],
     controllers: new Set(),
     done: false,
-    failed: false
+    failed: false,
+    bytesReceived: 0,
+    frameVersion: 0,
+    frameRendering: false,
+    lastFrameBytes: 0,
+    lastFrameAt: 0
   };
   pendingPreviews.set(token, {
     token,
     previewId,
     userId: input.userId,
     jobId: input.jobId,
+    imageIndex: input.imageIndex,
     mimeType: input.mimeType || "image/png",
     provider: input.provider,
     liveStream,
@@ -155,10 +213,19 @@ export function createStreamingPendingImagePreview(input: {
     token,
     previewId,
     url: `/api/files/pending-images/${encodeURIComponent(token)}`,
+    setMimeType(mimeType) {
+      const normalized = mimeType.trim().toLowerCase();
+      if (normalized.startsWith("image/")) {
+        const preview = pendingPreviews.get(token);
+        if (preview) preview.mimeType = normalized;
+      }
+    },
     write(chunk) {
       if (liveStream.done || chunk.byteLength === 0) return;
       const buffer = Buffer.from(chunk);
       liveStream.chunks.push(buffer);
+      liveStream.bytesReceived += buffer.length;
+      scheduleProgressiveFrame(liveStream);
       for (const controller of Array.from(liveStream.controllers)) {
         try {
           controller.enqueue(new Uint8Array(buffer));
@@ -168,6 +235,7 @@ export function createStreamingPendingImagePreview(input: {
       }
     },
     finish() {
+      scheduleProgressiveFrame(liveStream, true);
       closeControllers(false);
     },
     fail() {
@@ -182,6 +250,31 @@ export function getPendingImagePreview(userId: string, token: string) {
   if (!preview || preview.userId !== userId) return null;
   preview.expiresAt = Date.now() + PENDING_IMAGE_PREVIEW_TTL_MS;
   return preview;
+}
+
+export function activePendingImagePreviewsForJobs(userId: string, jobIds: string[]) {
+  cleanupExpiredPendingPreviews();
+  const targetJobIds = new Set(jobIds.map((jobId) => jobId.trim()).filter(Boolean));
+  if (targetJobIds.size === 0) return new Map<string, ActivePendingImagePreview[]>();
+  const previewsByJobId = new Map<string, ActivePendingImagePreview[]>();
+  for (const preview of pendingPreviews.values()) {
+    if (preview.userId !== userId || !targetJobIds.has(preview.jobId)) continue;
+    const fallbackUrl = `/api/files/pending-images/${encodeURIComponent(preview.token)}`;
+    const activePreview: ActivePendingImagePreview = {
+      previewId: preview.previewId,
+      jobId: preview.jobId,
+      imageIndex: preview.imageIndex,
+      url: preview.remoteUrl ?? fallbackUrl,
+      fallbackUrl,
+      mimeType: preview.mimeType,
+      streaming: Boolean(preview.liveStream)
+    };
+    const previews = previewsByJobId.get(preview.jobId) ?? [];
+    previews.push(activePreview);
+    previewsByJobId.set(preview.jobId, previews);
+  }
+  for (const previews of previewsByJobId.values()) previews.sort((left, right) => left.imageIndex - right.imageIndex);
+  return previewsByJobId;
 }
 
 export function releasePendingImagePreviewsForJob(jobId: string, immediate = false) {

@@ -81,8 +81,23 @@ function messageThumbnailUrl(message: Message) {
 }
 
 function pendingImageFallbackUrl(message: Message) {
+  if (message.metadata?.pendingImage !== true && message.metadata?.pendingPreviewActive !== true) return "";
   const value = message.metadata?.pendingFallbackUrl;
   return typeof value === "string" ? value.trim() : "";
+}
+
+function pendingImagePreviewUrl(message: Message) {
+  if (message.metadata?.pendingImage !== true && message.metadata?.pendingPreviewActive !== true) return "";
+  const value = message.metadata?.pendingPreviewUrl;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return message.metadata?.pendingImage === true ? message.imageOriginalUrl ?? message.imageUrl ?? "" : "";
+}
+
+function messageDisplayUrls(message: Message, thumbnail: boolean) {
+  const urls = thumbnail
+    ? [messageThumbnailUrl(message), message.imagePreviewUrl, message.imageOriginalUrl, message.imageUrl]
+    : [pendingImagePreviewUrl(message), pendingImageFallbackUrl(message), message.imageOriginalUrl, message.imageUrl];
+  return Array.from(new Set(urls.map((value) => value?.trim() ?? "").filter(Boolean)));
 }
 
 function referencePreviewUrl(message: Message) {
@@ -329,18 +344,93 @@ function ProgressiveMessageImage({
   onLoad?: () => void;
 }) {
   const { t } = useI18n();
-  const primaryUrl = thumbnail ? messageThumbnailUrl(message) : messagePreviewUrl(message);
-  const fallbackUrl = pendingImageFallbackUrl(message);
-  const pending = message.metadata?.pendingImage === true;
-  const [sourceUrl, setSourceUrl] = useState(primaryUrl);
+  const displayUrls = messageDisplayUrls(message, thumbnail);
+  const displayUrlsKey = displayUrls.join("\u0000");
+  const pending = message.metadata?.pendingImage === true || Boolean(pendingImagePreviewUrl(message));
+  const streamingPending = message.metadata?.streamingPreview === true && pending;
+  const streamingUrl = streamingPending ? pendingImagePreviewUrl(message) : "";
+  const [sourceUrl, setSourceUrl] = useState(displayUrls[0] ?? "");
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [streamBytes, setStreamBytes] = useState(0);
+  const [streamFrameVersion, setStreamFrameVersion] = useState(0);
+  const [streamDone, setStreamDone] = useState(false);
+  const streamSwapSequenceRef = useRef(0);
+
+  const preloadAndSwapSource = useCallback((nextUrl: string) => {
+    if (!nextUrl) return;
+    const sequence = streamSwapSequenceRef.current + 1;
+    streamSwapSequenceRef.current = sequence;
+    const image = new Image();
+    image.decoding = "async";
+    image.onload = () => {
+      if (streamSwapSequenceRef.current !== sequence) return;
+      setSourceUrl(nextUrl);
+      setLoaded(true);
+      setFailed(false);
+    };
+    image.onerror = () => undefined;
+    image.src = nextUrl;
+  }, []);
 
   useEffect(() => {
-    setSourceUrl(primaryUrl);
-    setLoaded(false);
-    setFailed(false);
-  }, [primaryUrl, fallbackUrl]);
+    setSourceUrl((current) => {
+      if (current && displayUrls.includes(current)) return current;
+      setLoaded(false);
+      setFailed(false);
+      return displayUrls[0] ?? "";
+    });
+  }, [displayUrlsKey]);
+
+  useEffect(() => {
+    if (!streamingUrl || typeof window === "undefined") return;
+    let stopped = false;
+    let timer = 0;
+    let latestFrameVersion = 0;
+    const statusUrl = `${streamingUrl.replace(/\/+$/, "")}/status`;
+    const poll = async () => {
+      try {
+        const response = await fetch(statusUrl, { credentials: "include", cache: "no-store" });
+        if (!response.ok) return;
+        const status = await response.json() as {
+          done?: boolean;
+          failed?: boolean;
+          bytesReceived?: number;
+          frameVersion?: number;
+          frameUrl?: string;
+        };
+        if (stopped) return;
+        setStreamBytes(Math.max(0, Number(status.bytesReceived ?? 0)));
+        const frameVersion = Math.max(0, Number(status.frameVersion ?? 0));
+        if (status.frameUrl && frameVersion > latestFrameVersion) {
+          latestFrameVersion = frameVersion;
+          setStreamFrameVersion(frameVersion);
+          preloadAndSwapSource(status.frameUrl);
+        }
+        if (status.done || status.failed) {
+          setStreamDone(Boolean(status.done && !status.failed));
+          if (!status.failed) preloadAndSwapSource(streamingUrl);
+          return;
+        }
+      } catch {
+      }
+      if (!stopped) timer = window.setTimeout(poll, 700);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [preloadAndSwapSource, streamingUrl]);
+
+  const streamMegabytes = streamBytes > 0 ? (streamBytes / (1024 * 1024)).toFixed(streamBytes >= 10 * 1024 * 1024 ? 1 : 2) : "";
+  const streamStatusText = streamDone
+    ? "原图接收完成，正在无缝切换"
+    : streamFrameVersion > 0
+      ? `正在渐进显示 · 已接收 ${streamMegabytes} MB · 更新 ${streamFrameVersion} 次`
+      : streamBytes > 0
+        ? `正在接收原图 · 已接收 ${streamMegabytes} MB`
+        : "已连接流式通道，等待首批图片数据";
 
   return (
     <span
@@ -361,6 +451,15 @@ function ProgressiveMessageImage({
         </span>
       ) : null}
       {!loaded && thumbnail ? <RefreshCw size={15} className="message-image-thumb-spinner spin" aria-hidden="true" /> : null}
+      {streamingPending && !thumbnail ? (
+        <span className="message-image-stream-status" aria-live="polite">
+          <span className="message-image-stream-status-row">
+            <span className="message-image-stream-pulse" aria-hidden="true" />
+            <strong>{streamStatusText}</strong>
+          </span>
+          <span className="message-image-stream-track" aria-hidden="true"><span /></span>
+        </span>
+      ) : null}
       <img
         src={sourceUrl}
         alt={alt}
@@ -372,8 +471,9 @@ function ProgressiveMessageImage({
           onLoad?.();
         }}
         onError={() => {
-          if (fallbackUrl && sourceUrl !== fallbackUrl) {
-            setSourceUrl(fallbackUrl);
+          const nextSourceUrl = displayUrls[displayUrls.indexOf(sourceUrl) + 1];
+          if (nextSourceUrl) {
+            setSourceUrl(nextSourceUrl);
             return;
           }
           setFailed(true);
@@ -715,7 +815,6 @@ function AssistantImageGroup({
   const [thumbsOverflowing, setThumbsOverflowing] = useState(false);
   const mainImageRef = useRef<HTMLDivElement | null>(null);
   const thumbsRef = useRef<HTMLDivElement | null>(null);
-  const previewPreloadsRef = useRef<HTMLImageElement[]>([]);
   const { showToast } = useToast();
   const { t } = useI18n();
   const maxIndex = Math.max(0, imageMessages.length - 1);
@@ -734,7 +833,6 @@ function AssistantImageGroup({
     ? sharedResultMessages
     : imageMessages;
   const longImage = isLongAssistantImage(activeMessage);
-  const previewUrlsKey = imageMessages.map((message) => messagePreviewUrl(message)).join("\u0000");
   const imageGroupStyle = {
     ...(thumbMaxHeight ? { "--image-result-thumb-max-height": `${Math.round(thumbMaxHeight)}px` } : {})
   } as CSSProperties;
@@ -754,16 +852,6 @@ function AssistantImageGroup({
   useEffect(() => {
     setActiveIndex((value) => Math.min(value, Math.max(0, imageMessages.length - 1)));
   }, [imageMessages.length]);
-
-  useEffect(() => {
-    previewPreloadsRef.current = imageMessages.map((message) => {
-      const preload = new Image();
-      preload.decoding = "async";
-      preload.src = messagePreviewUrl(message);
-      return preload;
-    });
-    return () => { previewPreloadsRef.current = []; };
-  }, [previewUrlsKey]);
 
   useLayoutEffect(() => {
     updateThumbLayout();

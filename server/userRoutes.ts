@@ -12,6 +12,7 @@ import { imageGenerationSettings } from "./settingsStore";
 import { publicSelectableLanguageModels, resolveLanguageModelProvider } from "./languageModelAssignments";
 import { replayImageJobEventsFromDb, streamImageJobEvents } from "./imageJobEvents";
 import { cleanupExpiredImageJobCancelIntents, imageJobCancelRequested } from "./imageJobCancellation";
+import { activePendingImagePreviewsForJobs } from "./pendingImagePreviews";
 import { saveUserPreferences } from "./userPreferences";
 import { deleteStoredFilesIfUnreferenced, readStoredFile, secureUserAvatarHistoryPath, secureUserAvatarPath, writeEncryptedFile } from "./secureFiles";
 import type { UserAvatarHistoryRow, UserRow } from "./types";
@@ -1113,11 +1114,12 @@ api.get("/sessions/:id/image-jobs", async (c) => {
     error: string | null;
     result_image_id: string | null;
     client_request_id: string | null;
+    request_json: string | null;
     created_at: string;
     updated_at: string;
   }>(
     appDb,
-    `select id, type, status, prompt, provider_id, error, result_image_id, client_request_id, created_at, updated_at
+    `select id, type, status, prompt, provider_id, error, result_image_id, client_request_id, request_json, created_at, updated_at
      from image_jobs
      where session_id = ? and user_id = ? ${status === "all" ? "" : "and status = ?"}
      order by created_at asc`,
@@ -1154,7 +1156,28 @@ api.get("/sessions/:id/image-jobs", async (c) => {
       ...(branchRootMessageId ? { branchRootMessageId } : {})
     });
   }
-  return c.json({ jobs: rows.map((row) => serializeJob({ ...row, ...(branchMetadataByJobId.get(row.id) ?? {}) })) });
+  const pendingPreviewsByJobId = activePendingImagePreviewsForJobs(
+    user.id,
+    rows.filter((row) => row.status === "running").map((row) => row.id)
+  );
+  return c.json({
+    jobs: rows.map((row) => {
+      const request = safeJson<Record<string, unknown>>(row.request_json, {});
+      const requestedImageCount = Math.max(1, Math.trunc(Number(request.n ?? 1)) || 1);
+      const size = String(request.size ?? "").trim();
+      const quality = String(request.quality ?? "").trim();
+      const pendingPreviews = (pendingPreviewsByJobId.get(row.id) ?? []).map((preview) => ({
+        ...preview,
+        imageTotal: requestedImageCount,
+        size,
+        quality
+      }));
+      return {
+        ...serializeJob({ ...row, ...(branchMetadataByJobId.get(row.id) ?? {}) }),
+        ...(pendingPreviews.length > 0 ? { pendingPreviews } : {})
+      };
+    })
+  });
 });
 
 api.get("/image-jobs/events", async (c) => {

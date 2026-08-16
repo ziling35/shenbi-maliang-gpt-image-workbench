@@ -121,7 +121,9 @@ import { registerBillingRoutes } from "./billing";
 import { startObjectStorageCacheScheduler } from "./objectStorage";
 import { registerObjectStorageRoutes } from "./objectStorageRoutes";
 import { registerVideoRoutes, startInterruptedVideoJobRecovery } from "./videoRoutes";
+import { initializePersistentLogging } from "./persistentLogging";
 
+const persistentLogs = initializePersistentLogging();
 initAppDb();
 initConfigDb();
 seedPromptReferenceLinks();
@@ -3393,6 +3395,30 @@ api.get("/config/audit", (c) => {
 });
 
 const app = new Hono();
+app.use("*", async (c, next) => {
+  const started = performance.now();
+  try {
+    await next();
+  } catch (error) {
+    console.error("HTTP 请求处理异常", {
+      method: c.req.method,
+      path: new URL(c.req.url).pathname,
+      durationMs: Math.round(performance.now() - started),
+      error
+    });
+    throw error;
+  } finally {
+    const durationMs = Math.round(performance.now() - started);
+    if (c.res.status >= 400 || durationMs >= 10_000) {
+      console.info("HTTP 请求完成", {
+        method: c.req.method,
+        path: new URL(c.req.url).pathname,
+        status: c.res.status,
+        durationMs
+      });
+    }
+  }
+});
 registerExternalMcpOAuthRoutes(app, api);
 registerExternalMcpUploadRoutes(app);
 registerExternalMcpResultRoutes(app);
@@ -3441,6 +3467,8 @@ const hostname = String(Bun.env.HOST ?? "0.0.0.0").trim() || "0.0.0.0";
 const displayHost = hostname === "0.0.0.0" ? "127.0.0.1" : hostname;
 const trustProxy = ["1", "true", "on"].includes(String(Bun.env.APP_TRUST_PROXY ?? "").trim().toLowerCase());
 console.log(`GPT Image Workbench listening on http://${displayHost}:${port}`);
+console.log(`Data directory: ${persistentLogs.logDir.replace(/[/\\]logs$/, "")}`);
+console.log(`Persistent logs: ${persistentLogs.serverLog}`);
 if (hostname === "0.0.0.0") {
   console.log(`LAN access enabled. Use this Windows machine's LAN IP with port ${port}.`);
 }

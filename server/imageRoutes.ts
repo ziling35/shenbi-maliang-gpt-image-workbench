@@ -2313,7 +2313,16 @@ api.post("/images/generate", async (c) => {
           run(appDb, `insert into images (id,user_id,session_id,job_id,path,prompt,kind,size,quality,provider_id,mime_type,parent_image_id,provider_file_id,provider_gen_id,provider_conversation_id,provider_parent_message_id,provider_source_account_id,image_width,image_height,image_file_size,generated_attempt_no,generated_by_retry,created_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, saved.id, user.id, sessionId, jobId, saved.file.path, prompt, "generation", size, quality, batchProvider.id, saved.file.mimeType, null, ...providerImageContextValues(saved.providerContext), saved.file.width, saved.file.height, saved.file.fileSize, batchAttemptNo, batchAttemptNo > 1 ? 1 : 0, createdAt);
           savedImageIds.push(saved.id);
           const pendingPreviewId = (saved as { pendingPreviewId?: string }).pendingPreviewId;
-          const messageMetadata = { mode: "generation", jobId, n: imageCount, imageIndex, imageTotal: imageCount, ...(pendingPreviewId ? { pendingPreviewId } : {}), ...revisionMetadata, ...branchMetadata };
+          const messageMetadata = {
+            mode: "generation",
+            jobId,
+            n: imageCount,
+            imageIndex,
+            imageTotal: imageCount,
+            ...(pendingPreviewId ? { pendingPreviewId } : {}),
+            ...revisionMetadata,
+            ...branchMetadata
+          };
           const messageId = insertMessage(user.id, sessionId, "assistant", "已生成图片", saved.id, messageMetadata);
           const serializedImageMessage = serializeMessage({
               id: messageId,

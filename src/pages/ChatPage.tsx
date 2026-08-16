@@ -673,7 +673,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     enabled: Boolean(sessionId),
     refetchInterval: (query) => {
       const data = query.state.data as { jobs: ImageJob[] } | undefined;
-      return data?.jobs.some((job) => job.status === "running") ? 120000 : false;
+      return data?.jobs.some((job) => job.status === "running") ? 5000 : false;
     }
   });
 
@@ -1238,6 +1238,94 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     submittingScopes.includes(routeSubmitScope)
     || (pendingSessionHandoffScope ? submittingScopes.includes(pendingSessionHandoffScope) : false);
   const imageJobs = sessionImageJobs.data?.jobs ?? [];
+  const pendingImageRestoreKey = useMemo(() => imageJobs.flatMap((job) => (
+    job.status === "running"
+      ? (job.pendingPreviews ?? []).map((preview) => [
+          job.id,
+          job.updatedAt,
+          preview.previewId,
+          preview.imageIndex,
+          preview.url,
+          preview.fallbackUrl
+        ].join(":"))
+      : []
+  )).join("\u0000"), [imageJobs]);
+  useEffect(() => {
+    if (!sessionId || !messages.isSuccess || !pendingImageRestoreKey) return;
+    const pendingMessages = imageJobs.flatMap((job) => (
+      job.status === "running"
+        ? (job.pendingPreviews ?? []).map((preview): Message => ({
+            id: preview.previewId,
+            role: "assistant",
+            content: preview.streaming ? "图片正在接收，刷新后已恢复预览" : "图片已返回，原图正在后台保存",
+            imageId: preview.previewId,
+            imageUrl: preview.url,
+            imageOriginalUrl: preview.url,
+            imagePreviewUrl: preview.url,
+            imageThumbnailUrl: preview.url,
+            imagePrompt: job.prompt,
+            imageOriginPrompt: job.prompt,
+            imageKind: job.type,
+            imageSize: preview.size,
+            imageWidth: 0,
+            imageHeight: 0,
+            imageFileSize: 0,
+            imageQuality: preview.quality,
+            imageProviderId: job.providerId,
+            parentImageId: null,
+            referenceImages: [],
+            metadata: {
+              mode: job.type,
+              jobId: job.id,
+              n: preview.imageTotal,
+              imageIndex: preview.imageIndex,
+              imageTotal: preview.imageTotal,
+              pendingImage: true,
+              pendingPreviewId: preview.previewId,
+              pendingFallbackUrl: preview.fallbackUrl,
+              streamingPreview: preview.streaming,
+              restoredPendingPreview: true,
+              ...(job.branchId ? { branchId: job.branchId } : {}),
+              ...(job.parentBranchId ? { parentBranchId: job.parentBranchId } : {}),
+              ...(job.branchForkMessageId ? { branchForkMessageId: job.branchForkMessageId } : {}),
+              ...(job.branchRootMessageId ? { branchRootMessageId: job.branchRootMessageId } : {})
+            },
+            createdAt: job.updatedAt || job.createdAt
+          }))
+        : []
+    ));
+    if (pendingMessages.length === 0) return;
+    queryClient.setQueryData<{ messages: Message[] }>(["messages", sessionId], (current) => {
+      if (!current) return current;
+      let changed = false;
+      const nextMessages = [...current.messages];
+      for (const pendingMessage of pendingMessages) {
+        const jobId = String(pendingMessage.metadata?.jobId ?? "");
+        const imageIndex = Number(pendingMessage.metadata?.imageIndex ?? 0);
+        const finalMessageExists = nextMessages.some((message) => (
+          message.metadata?.pendingImage !== true
+          && String(message.metadata?.jobId ?? "") === jobId
+          && Number(message.metadata?.imageIndex ?? 0) === imageIndex
+          && Boolean(message.imageId)
+        ));
+        if (finalMessageExists) continue;
+        const existingIndex = nextMessages.findIndex((message) => message.id === pendingMessage.id);
+        if (existingIndex >= 0) {
+          const existing = nextMessages[existingIndex];
+          if (existing.imageUrl !== pendingMessage.imageUrl || existing.metadata?.pendingFallbackUrl !== pendingMessage.metadata?.pendingFallbackUrl) {
+            nextMessages[existingIndex] = pendingMessage;
+            changed = true;
+          }
+          continue;
+        }
+        nextMessages.push(pendingMessage);
+        changed = true;
+      }
+      if (!changed) return current;
+      nextMessages.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+      return { ...current, messages: nextMessages };
+    });
+  }, [imageJobs, messages.isSuccess, pendingImageRestoreKey, queryClient, sessionId]);
   const runningImageJobs = imageJobs.filter((job) => job.status === "running");
   const failedJobIds = useMemo(() => new Set(imageJobs.filter((job) => job.status === "failed").map((job) => job.id)), [imageJobs]);
   const retryingJobId = retryImageJob.isPending ? retryImageJob.variables ?? "" : "";

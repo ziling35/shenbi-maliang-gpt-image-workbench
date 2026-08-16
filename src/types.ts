@@ -1212,6 +1212,18 @@ export type ImageJob = {
   parentBranchId?: string;
   branchForkMessageId?: string;
   branchRootMessageId?: string;
+  pendingPreviews?: Array<{
+    previewId: string;
+    jobId: string;
+    imageIndex: number;
+    imageTotal: number;
+    url: string;
+    fallbackUrl: string;
+    mimeType: string;
+    streaming: boolean;
+    size: string;
+    quality: string;
+  }>;
   createdAt: string;
   updatedAt: string;
 };

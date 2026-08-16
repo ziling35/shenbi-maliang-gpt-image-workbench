@@ -1647,7 +1647,7 @@ function ProviderDialog({
               />
             </label>
           ) : null}
-          {!isChatgptWeb && (form.protocol === "openai_images" || form.protocol === "grok_images") ? (
+          {!isChatgptWeb && (form.protocol === "openai_images" || form.protocol === "gemini_image" || form.protocol === "grok_images") ? (
             <label>
               图片返回格式
               <CustomSelect
@@ -1662,7 +1662,7 @@ function ProviderDialog({
               <small>{form.protocol === "grok_images" ? "Grok Web 推荐 URL；它支持 url 或 b64_json。" : "4K 或大图渠道优先选 URL；如果渠道返回 127.0.0.1、内网或不可访问地址，请选 Base64。"}</small>
             </label>
           ) : null}
-          {!isChatgptWeb && (form.protocol === "openai_images" || form.protocol === "grok_images") ? (
+          {!isChatgptWeb && (form.protocol === "openai_images" || form.protocol === "gemini_image" || form.protocol === "grok_images") ? (
             <div className="switch-row">
               <span>尝试流式图片响应</span>
               <SwitchControl
@@ -1670,7 +1670,7 @@ function ProviderDialog({
                 label={form.streamEnabled ? "启用" : "关闭"}
                 onChange={(streamEnabled) => patch({ streamEnabled })}
               />
-              <small>{form.protocol === "grok_images" ? "Grok Web 扩展 SSE 可逐张返回 URL；如果网关未启用扩展流，关闭后走普通 JSON。" : "渠道未声明支持 SSE 时建议关闭，避免第一次请求失败后再回退。"}</small>
+              <small>{form.protocol === "gemini_image" ? "Gemini 将请求 :streamGenerateContent?alt=sse；上游返回 text/event-stream 才是真流式。" : form.protocol === "grok_images" ? "Grok Web 扩展 SSE 可逐张返回 URL；如果网关未启用扩展流，关闭后走普通 JSON。" : "渠道未声明支持 SSE 时建议关闭，避免第一次请求失败后再回退。"}</small>
             </div>
           ) : null}
           {usesResponses && !isChatgptWeb ? (

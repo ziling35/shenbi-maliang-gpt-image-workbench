@@ -18,7 +18,7 @@ import { logProviderRequest } from "./auditLog";
 import { configDb, getAll, getOne, run } from "./db";
 import { readImageDimensions } from "./imageDimensions";
 import { ROOT } from "./paths";
-import { providerFetch, providerHeaders, proxyFetch, withProviderRequestTimeout } from "./providerHttp";
+import { providerFetch, providerHeaders, providerReliableStreamFetch, proxyFetch, withProviderRequestTimeout } from "./providerHttp";
 import { cpaAccount, imageGenerationSettings, proxySettings } from "./settingsStore";
 import type {
   CpaRemoteAuthFile,
@@ -44,6 +44,7 @@ import {
 } from "./utils";
 
 export type ProviderStreamingImageSink = {
+  setMimeType?: (mimeType: string) => Promise<void> | void;
   write: (chunk: Uint8Array) => Promise<void> | void;
   finish: () => Promise<void> | void;
   fail: () => Promise<void> | void;
@@ -1662,27 +1663,62 @@ function streamImageValues(event: unknown) {
   return values;
 }
 
-class GeminiInlineImageStreamDecoder {
+function streamedImageBytesComplete(mimeType: string, byteLength: number, tail: Uint8Array) {
+  const normalizedMimeType = mimeType.toLowerCase();
+  const bytes = Buffer.from(tail);
+  if (normalizedMimeType.includes("png")) {
+    const pngEnd = Buffer.from([0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]);
+    return bytes.length >= pngEnd.length && bytes.subarray(bytes.length - pngEnd.length).equals(pngEnd);
+  }
+  if (normalizedMimeType.includes("jpeg") || normalizedMimeType.includes("jpg")) {
+    return bytes.length >= 2 && bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
+  }
+  if (normalizedMimeType.includes("webp")) {
+    if (bytes.length < 12 || byteLength < 12) return false;
+    const header = bytes.subarray(0, Math.min(bytes.length, 12));
+    if (header.subarray(0, 4).toString("ascii") !== "RIFF" || header.subarray(8, 12).toString("ascii") !== "WEBP") return false;
+    return true;
+  }
+  return false;
+}
+
+export function imageStreamBytesLookComplete(mimeType: string, bytes: Uint8Array) {
+  return streamedImageBytesComplete(mimeType, bytes.byteLength, bytes);
+}
+
+export class GeminiInlineImageStreamDecoder {
   private prefix = "";
   private base64Remainder = "";
+  private base64Segments: string[] = [];
   private sink: ProviderStreamingImageSink | null = null;
+  private mimeType = "image/png";
+  private decodedByteLength = 0;
+  private decodedHead = Buffer.alloc(0);
+  private decodedTail = Buffer.alloc(0);
   private active = false;
   private finished = false;
 
   constructor(private readonly start: (mimeType: string) => Promise<ProviderStreamingImageSink | null>) {}
 
+  async prepare(mimeType = "image/png") {
+    if (this.sink || this.finished) return;
+    this.mimeType = mimeType;
+    this.sink = await this.start(this.mimeType);
+  }
+
   async push(text: string) {
-    if (!text || this.finished) return;
+    if (!text || this.finished) return null;
     let source = text;
     if (!this.active) {
       const combined = this.prefix + source;
       const marker = /"(?:inlineData|inline_data)"\s*:\s*\{[\s\S]{0,8192}?"data"\s*:\s*"/i.exec(combined);
       if (!marker) {
         this.prefix = combined.slice(-16384);
-        return;
+        return null;
       }
-      const mimeType = /"(?:mimeType|mime_type)"\s*:\s*"([^"]+)"/i.exec(marker[0])?.[1] || "image/png";
-      this.sink = await this.start(mimeType);
+      this.mimeType = /"(?:mimeType|mime_type)"\s*:\s*"([^"]+)"/i.exec(marker[0])?.[1] || "image/png";
+      if (!this.sink) this.sink = await this.start(this.mimeType);
+      await this.sink?.setMimeType?.(this.mimeType);
       this.active = true;
       source = combined.slice((marker.index ?? 0) + marker[0].length);
       this.prefix = "";
@@ -1693,13 +1729,37 @@ class GeminiInlineImageStreamDecoder {
     if (closingQuote >= 0) {
       this.finished = true;
       await this.sink?.finish();
+      return this.completedImageResponse();
     }
+    return null;
   }
 
   async fail() {
     if (this.finished) return;
     this.finished = true;
     await this.sink?.fail();
+  }
+
+  async recoverCompletedImage() {
+    if (!this.active) return null;
+    if (!this.finished) await this.writeBase64("", true);
+    const detectionBytes = this.decodedHead.length > 0
+      ? Buffer.concat([this.decodedHead, this.decodedTail])
+      : this.decodedTail;
+    if (!streamedImageBytesComplete(this.mimeType, this.decodedByteLength, detectionBytes)) return null;
+    if (!this.finished) {
+      this.finished = true;
+      await this.sink?.finish();
+    }
+    return this.completedImageResponse();
+  }
+
+  private completedImageResponse() {
+    return {
+      data: [{
+        b64_json: this.base64Segments.join("")
+      }]
+    };
   }
 
   private async writeBase64(value: string, flush: boolean) {
@@ -1709,7 +1769,15 @@ class GeminiInlineImageStreamDecoder {
     const encoded = this.base64Remainder.slice(0, usableLength);
     this.base64Remainder = this.base64Remainder.slice(usableLength);
     const chunk = Buffer.from(encoded, "base64");
-    if (chunk.length > 0) await this.sink?.write(chunk);
+    if (chunk.length > 0) {
+      this.base64Segments.push(encoded);
+      this.decodedByteLength += chunk.length;
+      if (this.decodedHead.length < 12) {
+        this.decodedHead = Buffer.concat([this.decodedHead, chunk]).subarray(0, 12);
+      }
+      this.decodedTail = Buffer.concat([this.decodedTail, chunk]).subarray(-32);
+      await this.sink?.write(chunk);
+    }
   }
 }
 
@@ -1742,18 +1810,29 @@ async function executeImagesApiStreamRequest(
 ) {
   const started = performance.now();
   let statusCode: number | null = null;
+  let responseHeadersMs = 0;
+  let responseBodyMs = 0;
+  let responseBytes = 0;
+  let firstChunkMs = 0;
+  let imageStreamStartedMs = 0;
+  let imageFirstByteMs = 0;
   const imageResponses: unknown[] = [];
   const seenImages = new Set<string>();
   let incrementalDecoder: GeminiInlineImageStreamDecoder | null = null;
+  let receivedEventStream = false;
   try {
     const responseJson = await withProviderRequestTimeout(async (signal) => {
-      const response = await providerFetch(provider, endpoint, {
+      const requestInit = {
         method: "POST",
         headers: providerHeaders(provider, "application/json", "text/event-stream"),
         body: JSON.stringify(options.preservePayload ? payload : { ...payload, stream: true, partial_images: 0 }),
         signal
-      });
+      } satisfies RequestInit;
+      const response = options.routeMode === "gemini_image_stream"
+        ? await providerReliableStreamFetch(provider, endpoint, requestInit)
+        : await providerFetch(provider, endpoint, requestInit);
       statusCode = response.status;
+      responseHeadersMs = performance.now() - started;
       if (!response.ok) {
         const text = await response.text();
         throw new Error(providerHttpErrorMessage(response.status, text));
@@ -1761,58 +1840,87 @@ async function executeImagesApiStreamRequest(
       const contentType = response.headers.get("content-type") ?? "";
       if (!contentType.includes("text/event-stream")) {
         const parsed = parseProviderResponse(await response.text());
-        await onImageResult(parsed);
+        if (options.routeMode === "gemini_image_stream") {
+          console.warn("Gemini 流式端点返回了非 SSE 响应，将按完整结果处理", { endpoint, contentType });
+        }
         return parsed;
       }
+      receivedEventStream = true;
       if (!response.body) throw new Error("图片接口未返回流式内容");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       if (options.routeMode === "gemini_image_stream" && context.onStreamingImageStart) {
-        incrementalDecoder = new GeminiInlineImageStreamDecoder((mimeType) => Promise.resolve(context.onStreamingImageStart!({ provider, mimeType })));
+        incrementalDecoder = new GeminiInlineImageStreamDecoder(async (mimeType) => {
+          imageStreamStartedMs ||= performance.now() - started;
+          const sink = await context.onStreamingImageStart!({ provider, mimeType });
+          if (!sink) return null;
+          return {
+            ...sink,
+            write: async (chunk) => {
+              imageFirstByteMs ||= performance.now() - started;
+              await sink.write(chunk);
+            }
+          };
+        });
+        await incrementalDecoder.prepare();
       }
       const expectedImageCount = Math.max(1, Math.trunc(Number(payload.n ?? 1)) || 1);
       const completedResponse = () => ({
         data: imageResponses.flatMap((item) => (item as { data: unknown[] }).data)
       });
+      const acceptImageResponse = async (imageResponse: unknown) => {
+        const key = streamImageKey(imageResponse);
+        if (!key || seenImages.has(key)) return false;
+        seenImages.add(key);
+        imageResponses.push(imageResponse);
+        await onImageResult(imageResponse);
+        return imageResponses.length >= expectedImageCount;
+      };
       let buffer = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        firstChunkMs ||= performance.now() - started;
+        responseBytes += value.byteLength;
         const textChunk = decoder.decode(value, { stream: true });
-        await incrementalDecoder?.push(textChunk);
+        const decodedImageResponse = await incrementalDecoder?.push(textChunk);
+        if (decodedImageResponse && await acceptImageResponse(decodedImageResponse)) {
+          await reader.cancel().catch(() => undefined);
+          responseBodyMs = Math.max(0, performance.now() - started - responseHeadersMs);
+          return completedResponse();
+        }
         buffer += textChunk;
         const parsed = sseJsonFrames(buffer);
         buffer = parsed.rest;
         for (const frame of parsed.frames) {
           for (const imageResponse of streamImageResponses(frame)) {
-            const key = streamImageKey(imageResponse);
-            if (!key || seenImages.has(key)) continue;
-            seenImages.add(key);
-            imageResponses.push(imageResponse);
-            await onImageResult(imageResponse);
-            if (imageResponses.length >= expectedImageCount) {
+            if (await acceptImageResponse(imageResponse)) {
               await reader.cancel().catch(() => undefined);
+              responseBodyMs = Math.max(0, performance.now() - started - responseHeadersMs);
               return completedResponse();
             }
           }
         }
       }
       const textTail = decoder.decode();
-      await incrementalDecoder?.push(textTail);
+      const decodedTailImageResponse = await incrementalDecoder?.push(textTail);
+      if (decodedTailImageResponse && await acceptImageResponse(decodedTailImageResponse)) {
+        responseBodyMs = Math.max(0, performance.now() - started - responseHeadersMs);
+        return completedResponse();
+      }
       buffer += textTail;
       const parsed = sseJsonFrames(`${buffer}\n\n`);
       for (const frame of parsed.frames) {
         for (const imageResponse of streamImageResponses(frame)) {
-          const key = streamImageKey(imageResponse);
-          if (!key || seenImages.has(key)) continue;
-          seenImages.add(key);
-          imageResponses.push(imageResponse);
-          await onImageResult(imageResponse);
-          if (imageResponses.length >= expectedImageCount) return completedResponse();
+          if (await acceptImageResponse(imageResponse)) {
+            responseBodyMs = Math.max(0, performance.now() - started - responseHeadersMs);
+            return completedResponse();
+          }
         }
       }
       if (imageResponses.length === 0) throw new Error("图片接口流式返回中没有找到最终图片");
+      responseBodyMs = Math.max(0, performance.now() - started - responseHeadersMs);
       return completedResponse();
     }, context.signal);
 
@@ -1823,12 +1931,54 @@ async function executeImagesApiStreamRequest(
       endpoint,
       statusCode,
       durationMs: performance.now() - started,
+      responseHeadersMs,
+      responseBodyMs: responseBodyMs || Math.max(0, performance.now() - started - responseHeadersMs),
+      responseBytes,
       success: true,
       ...providerRequestLogContext(context)
     });
-    return responseJson;
+    if (options.routeMode === "gemini_image_stream") {
+      console.info("Gemini 图片流阶段耗时", {
+        providerId: provider.id,
+        jobId: context.jobId ?? "",
+        transport: "node_http_stream",
+        responseHeadersMs: Math.round(responseHeadersMs),
+        firstChunkMs: Math.round(firstChunkMs),
+        previewCreatedMs: Math.round(imageStreamStartedMs),
+        imageFirstByteMs: Math.round(imageFirstByteMs),
+        completedMs: Math.round(performance.now() - started),
+        responseBytes
+      });
+    }
+    return { responseJson, streamed: receivedEventStream };
   } catch (error) {
     const decoderToFail = incrementalDecoder as GeminiInlineImageStreamDecoder | null;
+    const recoveredImageResponse = await decoderToFail?.recoverCompletedImage().catch(() => null);
+    if (recoveredImageResponse && imageResponses.length === 0) {
+      imageResponses.push(recoveredImageResponse);
+      await onImageResult(recoveredImageResponse);
+      const responseJson = {
+        data: imageResponses.flatMap((item) => (item as { data: unknown[] }).data)
+      };
+      logProviderRequest({
+        provider,
+        operation: options.operation ?? "generation",
+        routeMode: `${options.routeMode ?? "images_api_stream"}_socket_close_recovered`,
+        endpoint,
+        statusCode,
+        durationMs: performance.now() - started,
+        responseHeadersMs,
+        responseBodyMs: Math.max(0, performance.now() - started - responseHeadersMs),
+        responseBytes,
+        success: true,
+        ...providerRequestLogContext(context)
+      });
+      console.info("图片流已完整接收，上游随后关闭连接，任务按成功结果继续处理", {
+        providerId: provider.id,
+        jobId: context.jobId ?? ""
+      });
+      return { responseJson, streamed: true };
+    }
     if (decoderToFail) await decoderToFail.fail().catch(() => undefined);
     if (error instanceof Error) {
       (error as Error & { streamedImageCount?: number }).streamedImageCount = imageResponses.length;
@@ -1845,6 +1995,9 @@ async function executeImagesApiStreamRequest(
       endpoint,
       statusCode,
       durationMs: performance.now() - started,
+      responseHeadersMs,
+      responseBodyMs: Math.max(0, performance.now() - started - responseHeadersMs),
+      responseBytes,
       success: false,
       error: error instanceof Error ? error.message : String(error),
       ...providerRequestLogContext(context)
@@ -1943,7 +2096,7 @@ function geminiImageEndpoint(provider: ProviderRow) {
 
 function geminiImageStreamEndpoint(provider: ProviderRow) {
   const endpoint = new URL(geminiImageEndpoint(provider));
-  endpoint.pathname = endpoint.pathname.replace(/:generateContent$/i, ":streamGenerateContent");
+  endpoint.pathname = endpoint.pathname.replace(/:generateContent\/?$/i, ":streamGenerateContent");
   endpoint.searchParams.set("alt", "sse");
   return endpoint.toString();
 }
@@ -3465,25 +3618,14 @@ async function callProviderWithProgress(
 ) {
   const providerPayload = payload;
   if (provider.protocol === "gemini_image" && Boolean(provider.stream_enabled)) {
-    try {
-      const responseJson = await executeImagesApiStreamRequest(
-        provider,
-        geminiImageStreamEndpoint(provider),
-        buildGeminiImagePayload(provider, mode, providerPayload, "b64_json"),
-        onImageResult,
-        context,
-        { operation: mode, routeMode: "gemini_image_stream", preservePayload: true }
-      );
-      return { responseJson, streamed: true };
-    } catch (error) {
-      if (providerRequestWasCancelled(error, context.signal)) throw new ProviderRequestCancelledError();
-      const streamedImageCount = error instanceof Error ? (error as Error & { streamedImageCount?: number }).streamedImageCount ?? 0 : 0;
-      if (providerRequestMustNotRetry(error)) throw error;
-      if (streamedImageCount === 0) {
-        return { responseJson: await callGeminiImageProvider(provider, mode, providerPayload, context), streamed: false };
-      }
-      throw error;
-    }
+    return executeImagesApiStreamRequest(
+      provider,
+      geminiImageStreamEndpoint(provider),
+      buildGeminiImagePayload(provider, mode, providerPayload, "b64_json"),
+      onImageResult,
+      context,
+      { operation: mode, routeMode: "gemini_image_stream", preservePayload: true }
+    );
   }
   if (
     mode === "generation"
@@ -3495,8 +3637,7 @@ async function callProviderWithProgress(
       ? grokImagesEndpoint(provider, "generation")
       : normalizePath(provider.base_url, provider.generation_path);
     try {
-      const responseJson = await executeImagesApiStreamRequest(provider, endpoint, providerPayload, onImageResult, context);
-      return { responseJson, streamed: true };
+      return await executeImagesApiStreamRequest(provider, endpoint, providerPayload, onImageResult, context);
     } catch (error) {
       if (providerRequestWasCancelled(error, context.signal)) throw new ProviderRequestCancelledError();
       const streamedImageCount = error instanceof Error ? (error as Error & { streamedImageCount?: number }).streamedImageCount ?? 0 : 0;

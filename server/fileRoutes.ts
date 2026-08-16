@@ -171,16 +171,20 @@ async function appendArchiveBuffer(archive: Archiver, buffer: Buffer, name: stri
   await once(stream, "end");
 }
 
-function imageResponse(buffer: Buffer, mimeType: string) {
+function imageResponse(buffer: Buffer, mimeType: string, ifNoneMatch = "") {
   const etag = `"${createHash("sha1").update(buffer).digest("base64url").slice(0, 20)}"`;
+  const headers = {
+    "Content-Type": mimeType || "image/png",
+    "Content-Length": String(buffer.length),
+    "Cache-Control": "private, max-age=31536000, immutable",
+    "ETag": etag,
+    "Vary": "Cookie"
+  };
+  if (ifNoneMatch.split(",").map((value) => value.trim()).includes(etag)) {
+    return new Response(null, { status: 304, headers });
+  }
   return new Response(new Uint8Array(buffer), {
-    headers: {
-      "Content-Type": mimeType || "image/png",
-      "Content-Length": String(buffer.length),
-      "Cache-Control": "private, max-age=31536000, immutable",
-      "ETag": etag,
-      "Vary": "Cookie"
-    }
+    headers
   });
 }
 
@@ -257,25 +261,26 @@ async function storedImageResponse(
   path: string,
   mimeType: string,
   variantQuery: unknown,
-  forceProxy = false
+  forceProxy = false,
+  ifNoneMatch = ""
 ) {
   const variant = normalizeImageVariant(variantQuery);
   if (variant !== "original") {
     try {
       const derivative = await getOrCreateImageDerivative({ sourceType, sourceId, path }, variant);
-      if (forceProxy || localStoredFileExists(derivative.path)) return imageResponse(derivative.buffer, derivative.mimeType);
+      if (forceProxy || localStoredFileExists(derivative.path)) return imageResponse(derivative.buffer, derivative.mimeType, ifNoneMatch);
       const directUrl = await getStoredObjectUrl(derivative.path);
       if (directUrl) return Response.redirect(directUrl, 302);
-      return imageResponse(derivative.buffer, derivative.mimeType);
+      return imageResponse(derivative.buffer, derivative.mimeType, ifNoneMatch);
     } catch (error) {
       console.warn("图片派生图读取失败，回退原图", sourceType, sourceId, variant, error);
     }
   }
   try {
-    if (forceProxy || localStoredFileExists(path)) return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path));
+    if (forceProxy || localStoredFileExists(path)) return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path), ifNoneMatch);
     const directUrl = await getStoredObjectUrl(path);
     if (directUrl) return Response.redirect(directUrl, 302);
-    return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path));
+    return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path), ifNoneMatch);
   } catch (error) {
     console.warn("图片文件读取失败", path, error);
     return null;
@@ -283,6 +288,52 @@ async function storedImageResponse(
 }
 
 export function registerFileRoutes(api: Hono) {
+  api.get("/files/pending-images/:token/status", async (c) => {
+    const user = await requireUser(c);
+    if (!user) return c.json({ error: "未登录" }, 401);
+    const token = c.req.param("token");
+    const preview = getPendingImagePreview(user.id, token);
+    if (!preview) return c.json({ error: "临时图片不存在或已过期" }, 404);
+    const liveStream = preview.liveStream;
+    if (!liveStream) {
+      return c.json({
+        streaming: false,
+        done: true,
+        failed: false,
+        bytesReceived: preview.buffer?.length ?? 0,
+        frameVersion: 0,
+        frameUrl: ""
+      });
+    }
+    return c.json({
+      streaming: true,
+      done: liveStream.done,
+      failed: liveStream.failed,
+      bytesReceived: liveStream.bytesReceived,
+      frameVersion: liveStream.frameVersion,
+      frameUrl: liveStream.frameVersion > 0
+        ? `/api/files/pending-images/${encodeURIComponent(token)}/frame?v=${liveStream.frameVersion}`
+        : ""
+    }, 200, { "Cache-Control": "private, no-store" });
+  });
+
+  api.get("/files/pending-images/:token/frame", async (c) => {
+    const user = await requireUser(c);
+    if (!user) return c.json({ error: "未登录" }, 401);
+    const preview = getPendingImagePreview(user.id, c.req.param("token"));
+    if (!preview) return c.json({ error: "临时图片不存在或已过期" }, 404);
+    const frameBuffer = preview.liveStream?.frameBuffer;
+    if (!frameBuffer) return new Response(null, { status: 204, headers: { "Cache-Control": "private, no-store" } });
+    return new Response(new Uint8Array(frameBuffer), {
+      headers: {
+        "Content-Type": "image/jpeg",
+        "Content-Length": String(frameBuffer.length),
+        "Cache-Control": "private, no-store",
+        "X-Image-Preview-Quality": "progressive-temporary"
+      }
+    });
+  });
+
   api.get("/files/pending-images/:token", async (c) => {
     const user = await requireUser(c);
     if (!user) return c.json({ error: "未登录" }, 401);
@@ -683,14 +734,14 @@ export function registerFileRoutes(api: Hono) {
       ...params
     );
     if (!image) return c.json({ error: "图片不存在" }, 404);
-    return (await storedImageResponse("image", image.id, image.path, image.mime_type, c.req.query("variant"), c.req.query("proxy") === "1")) ?? c.json({ error: "图片文件不存在" }, 404);
+    return (await storedImageResponse("image", image.id, image.path, image.mime_type, c.req.query("variant"), c.req.query("proxy") === "1", c.req.header("if-none-match") ?? "")) ?? c.json({ error: "图片文件不存在" }, 404);
   });
 
   api.get("/files/assets/:assetId", async (c) => {
     const { asset, unauthorized } = await assetForFileAccess(c);
     if (unauthorized) return c.json({ error: "未登录" }, 401);
     if (!asset) return c.json({ error: "素材不存在" }, 404);
-    return (await storedImageResponse("asset", asset.id, asset.path, asset.mime_type, c.req.query("variant"), c.req.query("proxy") === "1")) ?? c.json({ error: "素材文件不存在" }, 404);
+    return (await storedImageResponse("asset", asset.id, asset.path, asset.mime_type, c.req.query("variant"), c.req.query("proxy") === "1", c.req.header("if-none-match") ?? "")) ?? c.json({ error: "素材文件不存在" }, 404);
   });
 
   api.get("/files/image-references/:referenceId", async (c) => {
@@ -718,7 +769,7 @@ export function registerFileRoutes(api: Hono) {
       ...params
     );
     if (!reference) return c.json({ error: "引用图片不存在" }, 404);
-    return (await storedImageResponse("image-reference", reference.id, reference.path, reference.mime_type, c.req.query("variant"), c.req.query("proxy") === "1")) ?? c.json({ error: "引用图片文件不存在" }, 404);
+    return (await storedImageResponse("image-reference", reference.id, reference.path, reference.mime_type, c.req.query("variant"), c.req.query("proxy") === "1", c.req.header("if-none-match") ?? "")) ?? c.json({ error: "引用图片文件不存在" }, 404);
   });
 
   api.get("/files/message-source-references/:referenceId", async (c) => {
@@ -731,6 +782,6 @@ export function registerFileRoutes(api: Hono) {
       user.id
     );
     if (!reference) return c.json({ error: "引用素材不存在" }, 404);
-    return (await storedImageResponse("message-source-reference", reference.id, reference.path, reference.mime_type, c.req.query("variant"), c.req.query("proxy") === "1")) ?? c.json({ error: "引用素材文件不存在" }, 404);
+    return (await storedImageResponse("message-source-reference", reference.id, reference.path, reference.mime_type, c.req.query("variant"), c.req.query("proxy") === "1", c.req.header("if-none-match") ?? "")) ?? c.json({ error: "引用素材文件不存在" }, 404);
   });
 }
