@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { reportImageJobClientTrace } from "../imageJobTrace";
 import type { Message } from "../types";
 
 export type ImageJobEventPayload = {
@@ -86,6 +87,12 @@ export function useImageJobEvents({ onConnected, onJob }: ImageJobEventsOptions)
         return;
       }
       if (event === "job" && isImageJobEventPayload(data)) {
+        reportImageJobClientTrace(data.jobId, "sse_received", {
+          eventUpdatedAt: data.updatedAt,
+          imageId: data.resultImageId ?? "",
+          status: data.status,
+          phase: data.phase ?? ""
+        }, `sse_received:${data.status}:${data.updatedAt}`);
         onJob(data);
       }
     };
@@ -96,7 +103,15 @@ export function useImageJobEvents({ onConnected, onJob }: ImageJobEventsOptions)
       const handleJob = (event: MessageEvent<string>) => {
         try {
           const payload = JSON.parse(event.data) as unknown;
-          if (isImageJobEventPayload(payload)) onJob(payload);
+          if (isImageJobEventPayload(payload)) {
+            reportImageJobClientTrace(payload.jobId, "sse_received", {
+              eventUpdatedAt: payload.updatedAt,
+              imageId: payload.resultImageId ?? "",
+              status: payload.status,
+              phase: payload.phase ?? ""
+            }, `sse_received:${payload.status}:${payload.updatedAt}`);
+            onJob(payload);
+          }
         } catch {
           // Ignore malformed event frames.
         }
@@ -165,3 +180,6 @@ export function useImageJobEvents({ onConnected, onJob }: ImageJobEventsOptions)
     };
   }, [onConnected, onJob]);
 }
+
+
+

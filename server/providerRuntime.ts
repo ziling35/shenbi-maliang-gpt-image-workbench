@@ -2094,6 +2094,12 @@ function geminiImageEndpoint(provider: ProviderRow) {
   return normalizePath(provider.base_url, configured.replace(/\{model\}/g, encodeURIComponent(provider.model)));
 }
 
+function shouldUseGeminiImageStream(payload: Record<string, unknown>) {
+  const requestedSize = String(payload.size ?? "").trim();
+  const dimensions = customImageDimensions(requestedSize);
+  const largestSide = dimensions ? Math.max(dimensions.width, dimensions.height) : 0;
+  return requestedImageResolutionTier(payload, largestSide) !== "4K";
+}
 function geminiImageStreamEndpoint(provider: ProviderRow) {
   const endpoint = new URL(geminiImageEndpoint(provider));
   endpoint.pathname = endpoint.pathname.replace(/:generateContent\/?$/i, ":streamGenerateContent");
@@ -3609,6 +3615,86 @@ export async function callProviderChain<T = undefined>(
   throw new Error(errors.join("; ") || `${mode === "edit" ? "图片编辑" : "图片生成"}没有可用渠道`);
 }
 
+async function executeGeminiBufferedImageRequest(
+  provider: ProviderRow,
+  endpoint: string,
+  operation: "generation" | "edit",
+  payload: Record<string, unknown>,
+  onImageResult: (responseJson: unknown) => Promise<void> | void,
+  context: ProviderRequestContext = {}
+) {
+  const started = performance.now();
+  let statusCode: number | null = null;
+  let responseHeadersMs = 0;
+  let responseBodyMs = 0;
+  let responseBytes = 0;
+  let incrementalDecoder: GeminiInlineImageStreamDecoder | null = null;
+  try {
+    const responseJson = await withProviderRequestTimeout(async (signal) => {
+      const response = await providerReliableStreamFetch(provider, endpoint, {
+        method: "POST",
+        headers: providerHeaders(provider, "application/json", "application/json"),
+        body: JSON.stringify(payload),
+        signal
+      });
+      statusCode = response.status;
+      responseHeadersMs = performance.now() - started;
+      if (!response.ok) throw new Error(providerHttpErrorMessage(response.status, await response.text()));
+      if (!response.body) throw new Error("图片接口未返回响应内容");
+      incrementalDecoder = new GeminiInlineImageStreamDecoder(async (mimeType) => {
+        const sink = await context.onStreamingImageStart?.({ provider, mimeType });
+        if (!sink) return null;
+        return { ...sink, write: async (chunk) => sink.write(chunk) };
+      });
+      await incrementalDecoder.prepare();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        responseBytes += value.byteLength;
+        const textChunk = decoder.decode(value, { stream: true });
+        buffer += textChunk;
+        const imageResponse = await incrementalDecoder.push(textChunk);
+        if (imageResponse) {
+          await onImageResult(imageResponse);
+          await reader.cancel().catch(() => undefined);
+          responseBodyMs = Math.max(0, performance.now() - started - responseHeadersMs);
+          return imageResponse;
+        }
+      }
+      const textTail = decoder.decode();
+      buffer += textTail;
+      const tailImageResponse = await incrementalDecoder.push(textTail);
+      if (tailImageResponse) {
+        await onImageResult(tailImageResponse);
+        responseBodyMs = Math.max(0, performance.now() - started - responseHeadersMs);
+        return tailImageResponse;
+      }
+      responseBodyMs = Math.max(0, performance.now() - started - responseHeadersMs);
+      return parseProviderResponse(buffer);
+    }, context.signal);
+    logProviderRequest({ provider, operation, routeMode: "gemini_image_buffered_progress", endpoint, statusCode, durationMs: performance.now() - started, responseHeadersMs, responseBodyMs, responseBytes, success: true, ...providerRequestLogContext(context) });
+    return { responseJson, streamed: true };
+  } catch (error) {
+    const decoderToFail = incrementalDecoder as GeminiInlineImageStreamDecoder | null;
+    const recoveredImageResponse = await decoderToFail?.recoverCompletedImage().catch(() => null);
+    if (recoveredImageResponse) {
+      await onImageResult(recoveredImageResponse);
+      logProviderRequest({ provider, operation, routeMode: "gemini_image_buffered_progress_socket_close_recovered", endpoint, statusCode, durationMs: performance.now() - started, responseHeadersMs, responseBodyMs: Math.max(0, performance.now() - started - responseHeadersMs), responseBytes, success: true, ...providerRequestLogContext(context) });
+      return { responseJson: recoveredImageResponse, streamed: true };
+    }
+    if (decoderToFail) await decoderToFail.fail().catch(() => undefined);
+    if (error instanceof Error && statusCode !== null && statusCode >= 200 && statusCode < 300) {
+      (error as Error & { upstreamAccepted?: boolean; nonRetryable?: boolean }).upstreamAccepted = true;
+      (error as Error & { upstreamAccepted?: boolean; nonRetryable?: boolean }).nonRetryable = true;
+      error.message = `上游已接受图片任务，但响应接收中断；为避免重复扣费，系统已停止自动回退和重试：${error.message}`;
+    }
+    logProviderRequest({ provider, operation, routeMode: "gemini_image_buffered_progress", endpoint, statusCode, durationMs: performance.now() - started, responseHeadersMs, responseBodyMs: responseBodyMs || Math.max(0, performance.now() - started - responseHeadersMs), responseBytes, success: false, error: error instanceof Error ? error.message : String(error), ...providerRequestLogContext(context) });
+    throw error;
+  }
+}
 async function callProviderWithProgress(
   provider: RuntimeProviderRow,
   mode: "generation" | "edit",
@@ -3618,14 +3704,18 @@ async function callProviderWithProgress(
 ) {
   const providerPayload = payload;
   if (provider.protocol === "gemini_image" && Boolean(provider.stream_enabled)) {
-    return executeImagesApiStreamRequest(
-      provider,
-      geminiImageStreamEndpoint(provider),
-      buildGeminiImagePayload(provider, mode, providerPayload, "b64_json"),
-      onImageResult,
-      context,
-      { operation: mode, routeMode: "gemini_image_stream", preservePayload: true }
-    );
+    const geminiPayload = buildGeminiImagePayload(provider, mode, providerPayload, "b64_json");
+    if (shouldUseGeminiImageStream(payload)) {
+      return executeImagesApiStreamRequest(
+        provider,
+        geminiImageStreamEndpoint(provider),
+        geminiPayload,
+        onImageResult,
+        context,
+        { operation: mode, routeMode: "gemini_image_stream", preservePayload: true }
+      );
+    }
+    return executeGeminiBufferedImageRequest(provider, geminiImageEndpoint(provider), mode, geminiPayload, onImageResult, context);
   }
   if (
     mode === "generation"

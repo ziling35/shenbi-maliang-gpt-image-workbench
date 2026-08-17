@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import sharp from "sharp";
 import {
   activePendingImagePreviewsForJobs,
   createStreamingPendingImagePreview,
@@ -35,10 +34,8 @@ describe("pending image previews", () => {
     expect(activePendingImagePreviewsForJobs("user-1", ["job-1"]).has("job-1")).toBe(false);
   });
 
-  test("creates temporary progressive frames without changing the original stream", async () => {
-    const source = await sharp({
-      create: { width: 640, height: 640, channels: 3, background: "#4477aa" }
-    }).png().toBuffer();
+  test("tracks streamed bytes without repeatedly decoding partial images", () => {
+    const source = Buffer.alloc(4 * 1024 * 1024, 7);
     const writer = createStreamingPendingImagePreview({
       provider: { id: "provider-2" } as never,
       userId: "user-2",
@@ -46,14 +43,16 @@ describe("pending image previews", () => {
       imageIndex: 1,
       mimeType: "image/png"
     });
-    writer.write(source.subarray(0, Math.floor(source.length * 0.7)));
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    writer.write(source.subarray(0, 2 * 1024 * 1024));
+    writer.write(source.subarray(2 * 1024 * 1024));
 
     const preview = getPendingImagePreview("user-2", writer.token);
-    expect(preview?.liveStream?.bytesReceived).toBe(Math.floor(source.length * 0.7));
-    expect(preview?.liveStream?.chunks[0]).toEqual(source.subarray(0, Math.floor(source.length * 0.7)));
+    expect(preview?.liveStream?.bytesReceived).toBe(source.length);
+    expect(preview?.liveStream?.chunks).toHaveLength(2);
+    expect(preview?.liveStream?.frameVersion).toBe(0);
+    expect(preview?.liveStream?.frameBuffer).toBeUndefined();
 
-    writer.fail();
+    writer.finish();
     releasePendingImagePreviewsForJob("job-2", true);
   });
 });

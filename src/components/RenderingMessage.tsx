@@ -523,7 +523,7 @@ export const RenderingMessage = memo(function RenderingMessage({ mode, completed
     <article className="message assistant-message rendering-message" aria-live="polite">
       <span key={`${mode}-${titleIndex}`} className={cx("rendering-title", titleSettled && "settled")}>
         {phase === "persisting"
-          ? "图片已显示，原图正在后台保存，可继续操作…"
+          ? "图片已返回，正在上传腾讯云…"
           : phase === "supplementing" && completedImageCount && requestedImageCount
             ? `已生成 ${completedImageCount}/${requestedImageCount} 张，正在补齐剩余图片…`
             : titles[titleIndex] ?? titles[0]}

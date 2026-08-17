@@ -1,6 +1,6 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { Readable } from "node:stream";
+import type { IncomingMessage } from "node:http";
 import { IMAGE_JOB_RUNNING_TIMEOUT_MS, PROVIDER_REQUEST_TIMEOUT_ERROR } from "./constants";
 import { proxySettings, shouldUseProxy } from "./settingsStore";
 import type { ProviderRow } from "./types";
@@ -73,6 +73,67 @@ function nodeRequestHeaders(init: RequestInit) {
   return headers;
 }
 
+function nodeResponseStreamError(response: IncomingMessage, event: "aborted" | "close" | "error", cause?: unknown) {
+  const detail = [
+    `event=${event}`,
+    `complete=${response.complete}`,
+    `readableEnded=${response.readableEnded}`,
+    `destroyed=${response.destroyed}`,
+    `contentLength=${response.headers["content-length"] ?? ""}`,
+    `transferEncoding=${response.headers["transfer-encoding"] ?? ""}`
+  ].join(", ");
+  const message = cause instanceof Error && cause.message ? cause.message : String(cause ?? "").trim();
+  return new Error(`上游流连接提前关闭（${detail}）${message ? `：${message}` : ""}`);
+}
+
+function nodeResponseBody(response: IncomingMessage) {
+  let cleanup = () => undefined;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        controller.close();
+      };
+      const fail = (event: "aborted" | "close" | "error", cause?: unknown) => {
+        if (settled) return;
+        if (response.complete || response.readableEnded) {
+          finish();
+          return;
+        }
+        settled = true;
+        cleanup();
+        controller.error(nodeResponseStreamError(response, event, cause));
+      };
+      const onData = (chunk: Buffer | Uint8Array | string) => {
+        if (settled) return;
+        controller.enqueue(typeof chunk === "string" ? Buffer.from(chunk) : Buffer.from(chunk));
+      };
+      const onEnd = () => finish();
+      const onAborted = () => fail("aborted");
+      const onError = (error: Error) => fail("error", error);
+      const onClose = () => fail("close");
+      cleanup = () => {
+        response.off("data", onData);
+        response.off("end", onEnd);
+        response.off("aborted", onAborted);
+        response.off("error", onError);
+        response.off("close", onClose);
+      };
+      response.on("data", onData);
+      response.once("end", onEnd);
+      response.once("aborted", onAborted);
+      response.once("error", onError);
+      response.once("close", onClose);
+    },
+    cancel(reason) {
+      cleanup();
+      response.destroy(reason instanceof Error ? reason : undefined);
+    }
+  });
+}
 export async function providerReliableStreamFetch(provider: ProviderRow, input: RequestInfo | URL, init: RequestInit) {
   if (shouldUseProxy(provider)) return providerFetch(provider, input, init);
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
@@ -100,7 +161,7 @@ export async function providerReliableStreamFetch(provider: ProviderRow, input: 
         if (Array.isArray(value)) responseHeaders.set(key, value.join(", "));
         else if (value !== undefined) responseHeaders.set(key, String(value));
       }
-      resolve(new Response(Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>, {
+      resolve(new Response(nodeResponseBody(res), {
         status: res.statusCode || 502,
         statusText: res.statusMessage || "",
         headers: responseHeaders

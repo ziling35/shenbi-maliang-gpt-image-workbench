@@ -1,5 +1,4 @@
 import { randomBytes } from "node:crypto";
-import sharp from "sharp";
 import { providerImagePreviewItems, type ProviderImagePreviewItem } from "./imageFiles";
 import type { ProviderRow } from "./types";
 
@@ -29,9 +28,6 @@ type PendingImageLiveStream = {
   bytesReceived: number;
   frameBuffer?: Buffer;
   frameVersion: number;
-  frameRendering: boolean;
-  lastFrameBytes: number;
-  lastFrameAt: number;
 };
 
 export type CreatedPendingImagePreview = {
@@ -57,38 +53,6 @@ export type ActivePendingImagePreview = {
   mimeType: string;
   streaming: boolean;
 };
-
-const PROGRESSIVE_FRAME_INITIAL_BYTES = 128 * 1024;
-const PROGRESSIVE_FRAME_STEP_BYTES = 2 * 1024 * 1024;
-const PROGRESSIVE_FRAME_INTERVAL_MS = 1200;
-
-function scheduleProgressiveFrame(liveStream: PendingImageLiveStream, force = false) {
-  if (liveStream.frameRendering || liveStream.bytesReceived < PROGRESSIVE_FRAME_INITIAL_BYTES) return;
-  const timestamp = Date.now();
-  if (!force
-    && liveStream.lastFrameBytes > 0
-    && liveStream.bytesReceived - liveStream.lastFrameBytes < PROGRESSIVE_FRAME_STEP_BYTES
-    && timestamp - liveStream.lastFrameAt < PROGRESSIVE_FRAME_INTERVAL_MS) return;
-  const sourceBytes = liveStream.bytesReceived;
-  const source = Buffer.concat(liveStream.chunks, sourceBytes);
-  liveStream.frameRendering = true;
-  liveStream.lastFrameBytes = sourceBytes;
-  liveStream.lastFrameAt = timestamp;
-  void sharp(source, { failOn: "none", sequentialRead: true })
-    .resize({ width: 1280, height: 1280, fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 82, progressive: true, mozjpeg: true })
-    .toBuffer()
-    .then((buffer) => {
-      if (buffer.length === 0) return;
-      liveStream.frameBuffer = buffer;
-      liveStream.frameVersion += 1;
-    })
-    .catch(() => undefined)
-    .finally(() => {
-      liveStream.frameRendering = false;
-      if (!liveStream.done && liveStream.bytesReceived > sourceBytes) scheduleProgressiveFrame(liveStream);
-    });
-}
 
 function cleanupExpiredPendingPreviews() {
   const timestamp = Date.now();
@@ -181,10 +145,7 @@ export function createStreamingPendingImagePreview(input: {
     done: false,
     failed: false,
     bytesReceived: 0,
-    frameVersion: 0,
-    frameRendering: false,
-    lastFrameBytes: 0,
-    lastFrameAt: 0
+    frameVersion: 0
   };
   pendingPreviews.set(token, {
     token,
@@ -225,7 +186,6 @@ export function createStreamingPendingImagePreview(input: {
       const buffer = Buffer.from(chunk);
       liveStream.chunks.push(buffer);
       liveStream.bytesReceived += buffer.length;
-      scheduleProgressiveFrame(liveStream);
       for (const controller of Array.from(liveStream.controllers)) {
         try {
           controller.enqueue(new Uint8Array(buffer));
@@ -235,7 +195,6 @@ export function createStreamingPendingImagePreview(input: {
       }
     },
     finish() {
-      scheduleProgressiveFrame(liveStream, true);
       closeControllers(false);
     },
     fail() {

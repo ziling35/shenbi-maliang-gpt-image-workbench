@@ -9,7 +9,7 @@ import { getOrCreateImageDerivative, normalizeImageVariant, type ImageDerivative
 import { parseImageBatchIds } from "./imageBatch";
 import { imageExtensionFromMime, mimeTypeFromPath } from "./imageFiles";
 import { localStoredFileExists, readStoredFile } from "./secureFiles";
-import { getStoredObjectUrl } from "./objectStorage";
+import { getStoredObjectUrl, objectStorageFileIsSynced } from "./objectStorage";
 import { providerFetch, providerHeaders, withProviderRequestTimeout } from "./providerHttp";
 import { getPendingImagePreview } from "./pendingImagePreviews";
 import { imageOriginPromptsByImageIds } from "./serializers";
@@ -264,22 +264,37 @@ async function storedImageResponse(
   forceProxy = false,
   ifNoneMatch = ""
 ) {
+  const startedAt = performance.now();
   const variant = normalizeImageVariant(variantQuery);
   if (variant !== "original") {
     try {
       const derivative = await getOrCreateImageDerivative({ sourceType, sourceId, path }, variant);
-      if (forceProxy || localStoredFileExists(derivative.path)) return imageResponse(derivative.buffer, derivative.mimeType, ifNoneMatch);
-      const directUrl = await getStoredObjectUrl(derivative.path);
-      if (directUrl) return Response.redirect(directUrl, 302);
+      if (forceProxy) return imageResponse(derivative.buffer, derivative.mimeType, ifNoneMatch);
+      const derivativeExistsLocally = localStoredFileExists(derivative.path);
+      const directUrl = objectStorageFileIsSynced(derivative.path) || !derivativeExistsLocally
+        ? await getStoredObjectUrl(derivative.path)
+        : null;
+      if (directUrl) {
+        console.info("图片文件跳转 COS", { sourceType, sourceId, variant, durationMs: Math.round(performance.now() - startedAt), path: derivative.path });
+        return Response.redirect(directUrl, 302);
+      }
+      if (derivativeExistsLocally) return imageResponse(derivative.buffer, derivative.mimeType, ifNoneMatch);
       return imageResponse(derivative.buffer, derivative.mimeType, ifNoneMatch);
     } catch (error) {
       console.warn("图片派生图读取失败，回退原图", sourceType, sourceId, variant, error);
     }
   }
   try {
-    if (forceProxy || localStoredFileExists(path)) return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path), ifNoneMatch);
-    const directUrl = await getStoredObjectUrl(path);
-    if (directUrl) return Response.redirect(directUrl, 302);
+    if (forceProxy) return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path), ifNoneMatch);
+    const existsLocally = localStoredFileExists(path);
+    const directUrl = objectStorageFileIsSynced(path) || !existsLocally
+      ? await getStoredObjectUrl(path)
+      : null;
+    if (directUrl) {
+      console.info("图片文件跳转 COS", { sourceType, sourceId, variant: "original", durationMs: Math.round(performance.now() - startedAt), path });
+      return Response.redirect(directUrl, 302);
+    }
+    if (existsLocally) return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path), ifNoneMatch);
     return imageResponse(await readStoredFile(path), mimeType || mimeTypeFromPath(path), ifNoneMatch);
   } catch (error) {
     console.warn("图片文件读取失败", path, error);
@@ -341,6 +356,10 @@ export function registerFileRoutes(api: Hono) {
     if (!preview) return c.json({ error: "临时图片不存在或已过期" }, 404);
     if (preview.liveStream) {
       const liveStream = preview.liveStream;
+      if (liveStream.done && !liveStream.failed) {
+        const completedBuffer = Buffer.concat(liveStream.chunks, liveStream.bytesReceived);
+        return imageResponse(completedBuffer, preview.mimeType || "image/png", c.req.header("If-None-Match") ?? "");
+      }
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           for (const chunk of liveStream.chunks) controller.enqueue(new Uint8Array(chunk));
@@ -785,3 +804,5 @@ export function registerFileRoutes(api: Hono) {
     return (await storedImageResponse("message-source-reference", reference.id, reference.path, reference.mime_type, c.req.query("variant"), c.req.query("proxy") === "1", c.req.header("if-none-match") ?? "")) ?? c.json({ error: "引用素材文件不存在" }, 404);
   });
 }
+
+

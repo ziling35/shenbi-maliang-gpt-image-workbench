@@ -38,6 +38,7 @@ type ObjectStorageCacheRow = {
 
 const DEFAULT_LOCAL_CACHE_DAYS = 7;
 const CACHE_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const COS_REQUEST_TIMEOUT_MS = 120_000;
 let cacheCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 let clientCache: { key: string; client: COS } | null = null;
@@ -144,7 +145,16 @@ function objectKey(relativePath: string, settings: ObjectStorageSettings) {
 function cosClient(settings: ObjectStorageSettings) {
   const key = `${settings.secretId}\0${settings.secretKey}`;
   if (!clientCache || clientCache.key !== key) {
-    clientCache = { key, client: new COS({ SecretId: settings.secretId, SecretKey: settings.secretKey }) };
+    clientCache = {
+      key,
+      client: new COS({
+        SecretId: settings.secretId,
+        SecretKey: settings.secretKey,
+        Timeout: COS_REQUEST_TIMEOUT_MS,
+        KeepAlive: true,
+        ProgressInterval: 1000
+      })
+    };
   }
   return clientCache.client;
 }
@@ -244,7 +254,29 @@ export async function readObjectStorageFile(relativePath: string) {
 
 export async function writeObjectStorageFile(relativePath: string, buffer: Buffer, mimeType?: string) {
   const settings = objectStorageSettings(true);
-  await cosRequest((callback) => cosClient(settings).putObject({ Bucket: settings.bucket, Region: settings.region, Key: objectKey(relativePath, settings), Body: buffer, ...(mimeType ? { ContentType: mimeType } : {}) }, callback));
+  const startedAt = performance.now();
+  let lastProgressLogAt = 0;
+  await cosRequest((callback) => cosClient(settings).putObject({
+    Bucket: settings.bucket,
+    Region: settings.region,
+    Key: objectKey(relativePath, settings),
+    Body: buffer,
+    ContentLength: buffer.length,
+    ...(mimeType ? { ContentType: mimeType } : {}),
+    onProgress: (progress) => {
+      const elapsedMs = Math.round(performance.now() - startedAt);
+      if (elapsedMs - lastProgressLogAt < 5000 && progress.percent < 1) return;
+      lastProgressLogAt = elapsedMs;
+      console.info("COS 文件上传进度", {
+        path: cleanPath(relativePath),
+        loaded: progress.loaded,
+        total: progress.total || buffer.length,
+        percent: Math.round(progress.percent * 1000) / 10,
+        speedBytesPerSecond: Math.round(progress.speed || 0),
+        elapsedMs
+      });
+    }
+  }, callback));
 }
 
 export async function deleteObjectStorageFile(relativePath: string) {
@@ -295,3 +327,4 @@ export async function listLocalObjectStorageFiles() {
   for (const root of roots) await walk(root);
   return files;
 }
+

@@ -146,8 +146,19 @@ export function streamImageJobEvents(userId: string, options: ImageJobEventStrea
 
 export function emitImageJobEvent(userId: string, payload: ImageJobEventPayload) {
   const clients = clientsByUserId.get(userId);
+  console.info("图片任务 SSE 推送", {
+    jobId: payload.jobId,
+    status: payload.status,
+    phase: payload.phase ?? "",
+    resultImageId: payload.resultImageId ?? "",
+    clientCount: clients?.size ?? 0,
+    updatedAt: payload.updatedAt
+  });
   if (!clients || clients.size === 0) return;
   for (const client of Array.from(clients)) {
     client.send("job", payload, eventId(payload));
   }
 }
+
+
+

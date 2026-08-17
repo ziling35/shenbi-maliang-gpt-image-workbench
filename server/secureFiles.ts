@@ -21,9 +21,6 @@ const MAGIC = Buffer.from("GIMG1");
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 const KEY_ID = "default";
-const pendingCosUploads = new Map<string, Promise<void>>();
-const queuedCosUploadBuffers = new Map<string, Buffer>();
-
 function ensureFileSecurityTable() {
   configDb.run(`
     create table if not exists file_security_settings (
@@ -154,30 +151,6 @@ export function decryptBuffer(buffer: Buffer) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
 }
 
-function queueCosUpload(cleanPath: string, buffer: Buffer) {
-  queuedCosUploadBuffers.set(cleanPath, buffer);
-  const existing = pendingCosUploads.get(cleanPath);
-  if (existing) return existing;
-  const upload = (async () => {
-    while (queuedCosUploadBuffers.has(cleanPath)) {
-      const nextBuffer = queuedCosUploadBuffers.get(cleanPath);
-      queuedCosUploadBuffers.delete(cleanPath);
-      if (!nextBuffer) continue;
-      await writeObjectStorageFile(cleanPath, nextBuffer, storedImageMimeType(nextBuffer));
-      markObjectStorageUploaded(cleanPath);
-    }
-  })()
-    .catch((error) => {
-      console.warn("图片后台上传 COS 失败，已保留本地副本", cleanPath, error);
-    })
-    .finally(() => {
-      pendingCosUploads.delete(cleanPath);
-      queuedCosUploadBuffers.delete(cleanPath);
-    });
-  pendingCosUploads.set(cleanPath, upload);
-  return upload;
-}
-
 export function secureVideoPath(userId: string, videoId: string) {
   return [
     "files",
@@ -199,23 +172,14 @@ export async function readStoredFile(relativePath: string, options: { syncObject
   if (localStoredFileExists(cleanPath)) {
     try {
       const buffer = decryptBuffer(await readFile(absoluteDataPath(cleanPath)));
-      if (syncObjectStorage && objectStorageUsesCos(cleanPath)) {
-        if (objectStorageFileIsSynced(cleanPath)) touchObjectStorageCache(cleanPath);
-        else void queueCosUpload(cleanPath, buffer);
-      }
+      if (syncObjectStorage && objectStorageUsesCos(cleanPath) && objectStorageFileIsSynced(cleanPath)) touchObjectStorageCache(cleanPath);
       return buffer;
     } catch (error) {
       if (!objectStorageUsesCos(cleanPath)) throw error;
     }
   }
   if (objectStorageUsesCos(cleanPath)) {
-    const buffer = await readObjectStorageFile(cleanPath);
-    if (syncObjectStorage) {
-      await mkdir(path.dirname(absoluteDataPath(cleanPath)), { recursive: true });
-      await writeFile(absoluteDataPath(cleanPath), encryptBuffer(buffer));
-      markObjectStorageUploaded(cleanPath);
-    }
-    return buffer;
+    return readObjectStorageFile(cleanPath);
   }
   const buffer = await readFile(absoluteDataPath(cleanPath));
   return decryptBuffer(buffer);
@@ -223,11 +187,23 @@ export async function readStoredFile(relativePath: string, options: { syncObject
 
 export async function writeEncryptedFile(relativePath: string, buffer: Buffer) {
   const cleanPath = relativePath.replace(/^\/+/, "").replaceAll("\\", "/");
+  if (objectStorageUsesCos(cleanPath)) {
+    const uploadStartedAt = performance.now();
+    markObjectStorageCachePending(cleanPath);
+    await writeObjectStorageFile(cleanPath, buffer, storedImageMimeType(buffer));
+    markObjectStorageUploaded(cleanPath);
+    if (buffer.length >= 1024 * 1024) {
+      console.info("COS 文件上传完成", {
+        path: cleanPath,
+        bytes: buffer.length,
+        durationMs: Math.round(performance.now() - uploadStartedAt)
+      });
+    }
+    return;
+  }
   const absolutePath = absoluteDataPath(cleanPath);
   await mkdir(path.dirname(absolutePath), { recursive: true });
-  if (objectStorageUsesCos(cleanPath)) markObjectStorageCachePending(cleanPath);
   await writeFile(absolutePath, encryptBuffer(buffer));
-  if (objectStorageUsesCos(cleanPath)) void queueCosUpload(cleanPath, buffer);
 }
 
 function storedImageMimeType(buffer: Buffer) {

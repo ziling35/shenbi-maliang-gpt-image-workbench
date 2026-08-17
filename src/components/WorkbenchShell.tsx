@@ -7,6 +7,7 @@ import { Camera, ChevronRight, CircleHelp, Film, FolderOpen, Images, Lightbulb, 
 import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { languagePreferenceLabel, useI18n, type LocaleCode, type Translate } from "../i18n";
+import { reportImageJobClientTrace } from "../imageJobTrace";
 import type { AppearanceMode } from "../lib/appearance";
 import { cx } from "../lib/cx";
 import { pauseRenderingMotion } from "../lib/renderingMotion";
@@ -1523,6 +1524,15 @@ export function WorkbenchShell({ user }: { user: User }) {
     if (payload.status !== "running") {
       queryClient.invalidateQueries({ queryKey: ["cases"] });
     }
+    if (payload.imageMessage || payload.resultImageId) {
+      reportImageJobClientTrace(payload.jobId, "message_cache_updated", {
+        eventUpdatedAt: payload.updatedAt,
+        imageId: payload.resultImageId ?? "",
+        status: payload.status,
+        appendedImageMessage,
+        resultMessageAlreadyCached
+      }, `message_cache_updated:${payload.updatedAt}:${payload.resultImageId ?? ""}`);
+    }
   }, [
     clearSessionGenerationStatus,
     handleImageTaskSoundEvent,
@@ -3025,3 +3035,4 @@ function EditProfileDialog({
     </>
   );
 }
+

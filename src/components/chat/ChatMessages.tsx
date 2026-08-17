@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { reportImageJobClientTrace } from "../../imageJobTrace";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, MoreHorizontal, RefreshCw } from "lucide-react";
 import { AddCaseModal } from "../AddCaseModal";
@@ -402,10 +403,9 @@ function ProgressiveMessageImage({
         if (stopped) return;
         setStreamBytes(Math.max(0, Number(status.bytesReceived ?? 0)));
         const frameVersion = Math.max(0, Number(status.frameVersion ?? 0));
-        if (status.frameUrl && frameVersion > latestFrameVersion) {
+        if (frameVersion > latestFrameVersion) {
           latestFrameVersion = frameVersion;
           setStreamFrameVersion(frameVersion);
-          preloadAndSwapSource(status.frameUrl);
         }
         if (status.done || status.failed) {
           setStreamDone(Boolean(status.done && !status.failed));
@@ -425,12 +425,12 @@ function ProgressiveMessageImage({
 
   const streamMegabytes = streamBytes > 0 ? (streamBytes / (1024 * 1024)).toFixed(streamBytes >= 10 * 1024 * 1024 ? 1 : 2) : "";
   const streamStatusText = streamDone
-    ? "原图接收完成，正在无缝切换"
+    ? "原图接收完成，正在载入"
     : streamFrameVersion > 0
-      ? `正在渐进显示 · 已接收 ${streamMegabytes} MB · 更新 ${streamFrameVersion} 次`
+      ? `正在生成原图 · 已接收 ${streamMegabytes} MB`
       : streamBytes > 0
         ? `正在接收原图 · 已接收 ${streamMegabytes} MB`
-        : "已连接流式通道，等待首批图片数据";
+        : "正在连接生成服务 · 等待图片数据";
 
   return (
     <span
@@ -438,12 +438,13 @@ function ProgressiveMessageImage({
         "message-image-load-frame",
         thumbnail && "is-thumbnail",
         pending && "is-pending",
+        streamingPending && !streamDone && "is-streaming-placeholder",
         loaded && "is-loaded",
         failed && "is-failed"
       )}
       style={thumbnail ? undefined : { aspectRatio: imageAspectRatio(message) }}
     >
-      {!loaded && !thumbnail ? (
+      {!loaded && !thumbnail && !streamingPending ? (
         <span className="message-image-load-status" aria-live="polite">
           <RefreshCw size={18} className="spin" />
           <strong>{pending ? t("chatMessages.upstreamImageReady") : t("chatMessages.loadingImage")}</strong>
@@ -460,25 +461,37 @@ function ProgressiveMessageImage({
           <span className="message-image-stream-track" aria-hidden="true"><span /></span>
         </span>
       ) : null}
-      <img
-        src={sourceUrl}
-        alt={alt}
-        loading="eager"
-        decoding="async"
-        onLoad={() => {
-          setLoaded(true);
-          setFailed(false);
-          onLoad?.();
-        }}
-        onError={() => {
-          const nextSourceUrl = displayUrls[displayUrls.indexOf(sourceUrl) + 1];
-          if (nextSourceUrl) {
-            setSourceUrl(nextSourceUrl);
-            return;
-          }
-          setFailed(true);
-        }}
-      />
+      {sourceUrl && (!streamingPending || streamDone) ? (
+        <img
+          src={sourceUrl}
+          alt={alt}
+          loading="eager"
+          decoding="async"
+          onLoad={() => {
+            const jobId = typeof message.metadata?.jobId === "string" ? message.metadata.jobId : "";
+            reportImageJobClientTrace(jobId, "image_loaded", {
+              imageId: message.imageId ?? "",
+              imageUrl: sourceUrl
+            }, `image_loaded:${message.imageId ?? sourceUrl}`);
+            setLoaded(true);
+            setFailed(false);
+            onLoad?.();
+          }}
+          onError={() => {
+            const jobId = typeof message.metadata?.jobId === "string" ? message.metadata.jobId : "";
+            reportImageJobClientTrace(jobId, "image_load_failed", {
+              imageId: message.imageId ?? "",
+              imageUrl: sourceUrl
+            }, `image_load_failed:${message.imageId ?? sourceUrl}:${sourceUrl}`);
+            const nextSourceUrl = displayUrls[displayUrls.indexOf(sourceUrl) + 1];
+            if (nextSourceUrl) {
+              setSourceUrl(nextSourceUrl);
+              return;
+            }
+            setFailed(true);
+          }}
+        />
+      ) : null}
     </span>
   );
 }
@@ -1416,3 +1429,6 @@ export function ChatMessage({
     </article>
   );
 }
+
+
+

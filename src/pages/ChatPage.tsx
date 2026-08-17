@@ -2573,7 +2573,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
             })
           }
         />
-        {visibleLoadingMode && !visiblePendingImagePreview && visibleRunningImageJob?.phase !== "persisting" ? (
+        {visibleLoadingMode && !visiblePendingImagePreview ? (
           <div ref={loadingMessageRef} className="message-enter-row loading-message-anchor" style={messageRevealStyle(renderItems.length)}>
             <RenderingMessage mode={visibleLoadingMode} completedImageCount={visibleRunningImageJob?.completedImageCount} requestedImageCount={visibleRunningImageJob?.requestedImageCount} phase={visibleRunningImageJob?.phase} />
           </div>
