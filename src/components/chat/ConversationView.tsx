@@ -1,6 +1,6 @@
 import { useMemo, type CSSProperties } from "react";
 import type { ChatRenderItem, MessageRevision } from "../../lib/chatRender";
-import type { Message, WorkImage } from "../../types";
+import type { Message, MessageSourceReferenceImage, WorkImage } from "../../types";
 import { ChatMessage, ChatMessageThread } from "./ChatMessages";
 
 type MessageEditPayload = {
@@ -8,6 +8,7 @@ type MessageEditPayload = {
   userMessage: Message;
   assistantMessage: Message | null;
   prompt: string;
+  sourceReferences?: MessageSourceReferenceImage[];
 };
 
 type ConversationViewProps = {

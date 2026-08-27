@@ -46,7 +46,7 @@ import { useImageEditorLauncher } from "../hooks/useImageEditorLauncher";
 import { useRunningImageJobRefresh } from "../hooks/useRunningImageJobRefresh";
 import { copyTextToClipboard } from "../lib/clipboard";
 import { COMPOSER_NEW_DRAFT_SCOPE_KEY, useWorkbench, type ComposerSessionDraft, type ImageEditorOpenRequest } from "../store/workbench";
-import type { AssetItem, CaseCategory, CaseMaterialItem, ChatSession, ImageEditSuggestion, ImageJob, Message, SessionShareLink, User, WorkImage } from "../types";
+import type { AssetItem, CaseCategory, CaseMaterialItem, ChatSession, ImageEditSuggestion, ImageJob, Message, MessageSourceReferenceImage, SessionShareLink, User, WorkImage } from "../types";
 import { ConfirmDialog, useToast } from "../ui";
 
 type SessionPage = Awaited<ReturnType<typeof api.sessions>>;
@@ -2234,10 +2234,27 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
     userMessage: Message;
     assistantMessage: Message | null;
     prompt: string;
+    sourceReferences?: MessageSourceReferenceImage[];
   }) => {
     const trimmedPrompt = payload.prompt.trim();
-    if (currentScopeBusy || !trimmedPrompt) return;
-    const sourceSnapshot = sourceSnapshotFromMessage(payload.userMessage);
+    if ((currentScopeSubmitting && runningImageJobs.length === 0) || !trimmedPrompt) return;
+    const originalSnapshot = sourceSnapshotFromMessage(payload.userMessage);
+    const remainingReferences = payload.sourceReferences ?? originalSnapshot.references;
+    const sourceImageIds = remainingReferences.filter((reference) => reference.kind === "image").map((reference) => reference.id.replace(/^image:/, "")).filter(Boolean);
+    const sourceAssetIds = remainingReferences.map((reference) => reference.sourceAssetId ?? "").filter(Boolean);
+    const sourceCaseItemIds = remainingReferences.map((reference) => reference.sourceCaseItemId ?? "").filter(Boolean);
+    const sourceReferenceIds = remainingReferences.map((reference) => reference.sourceReferenceId ?? "").filter(Boolean);
+    const primaryImageReference = remainingReferences.find((reference) => reference.kind === "image") ?? null;
+    const sourceSnapshot = {
+      ...originalSnapshot,
+      references: remainingReferences,
+      sourceImageIds: Array.from(new Set(sourceImageIds)),
+      sourceAssetIds: Array.from(new Set(sourceAssetIds)),
+      sourceCaseItemIds: Array.from(new Set(sourceCaseItemIds)),
+      sourceReferenceIds: Array.from(new Set(sourceReferenceIds)),
+      primaryImageReference,
+      materialReferences: remainingReferences.filter((reference) => reference !== primaryImageReference)
+    };
     const mode: SubmitRequest["mode"] =
       sourceSnapshot.sourceImageIds.length > 0 ||
       sourceSnapshot.sourceAssetIds.length > 0 ||
@@ -2575,7 +2592,7 @@ export function ChatPage({ user, sessionActions }: { user: User; sessionActions?
         />
         {visibleLoadingMode && !visiblePendingImagePreview ? (
           <div ref={loadingMessageRef} className="message-enter-row loading-message-anchor" style={messageRevealStyle(renderItems.length)}>
-            <RenderingMessage mode={visibleLoadingMode} completedImageCount={visibleRunningImageJob?.completedImageCount} requestedImageCount={visibleRunningImageJob?.requestedImageCount} phase={visibleRunningImageJob?.phase} />
+            <RenderingMessage mode={visibleLoadingMode} completedImageCount={visibleRunningImageJob?.completedImageCount} requestedImageCount={visibleRunningImageJob?.requestedImageCount} phase={visibleRunningImageJob?.phase} startedAt={visibleRunningImageJob?.createdAt} durationMs={visibleRunningImageJob?.durationMs} />
           </div>
         ) : latestVisibleFailedJob ? (
           <div className="message-enter-row" style={messageRevealStyle(renderItems.length)}>

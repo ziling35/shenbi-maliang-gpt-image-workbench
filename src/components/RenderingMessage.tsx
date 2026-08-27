@@ -6,6 +6,20 @@ import { RENDERING_MOTION_PAUSE_EVENT, getRenderingMotionPauseUntil } from "../l
 
 type RenderingMode = "generation" | "edit";
 
+function formatDurationMs(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+}
+
+function parseServerTimestamp(value: string) {
+  const normalized = value.trim();
+  if (!normalized) return NaN;
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  return Date.parse(hasTimezone ? normalized : `${normalized}Z`);
+}
+
 const GENERATION_LOADING_TITLE_KEYS = [
   "rendering.generation.understanding",
   "rendering.generation.composing",
@@ -241,7 +255,7 @@ const drawRenderingDots = (
   }
 };
 
-export const RenderingMessage = memo(function RenderingMessage({ mode, completedImageCount, requestedImageCount, phase }: { mode: RenderingMode; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "persisting" | "supplementing" }) {
+export const RenderingMessage = memo(function RenderingMessage({ mode, completedImageCount, requestedImageCount, phase, startedAt, durationMs }: { mode: RenderingMode; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "persisting" | "supplementing"; startedAt?: string; durationMs?: number }) {
   const { t } = useI18n();
   const titles = useMemo(
     () => (mode === "edit" ? EDIT_LOADING_TITLE_KEYS : GENERATION_LOADING_TITLE_KEYS).map((key) => t(key)),
@@ -250,6 +264,7 @@ export const RenderingMessage = memo(function RenderingMessage({ mode, completed
   const [renderSeed] = useState(() => Math.floor(Math.random() * 100000));
   const [titleIndex, setTitleIndex] = useState(0);
   const [titleSettled, setTitleSettled] = useState(true);
+  const [elapsedMs, setElapsedMs] = useState(() => durationMs ?? 0);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const motionPauseUntilRef = useRef(getRenderingMotionPauseUntil());
@@ -263,6 +278,19 @@ export const RenderingMessage = memo(function RenderingMessage({ mode, completed
     };
   } | null>(null);
   const variant = renderSeed % 3;
+
+  useEffect(() => {
+    if (durationMs !== undefined) {
+      setElapsedMs(durationMs);
+      return undefined;
+    }
+    const started = startedAt ? parseServerTimestamp(startedAt) : NaN;
+    if (!Number.isFinite(started)) return undefined;
+    const update = () => setElapsedMs(Math.max(0, Date.now() - started));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [durationMs, startedAt]);
 
   useEffect(() => {
     setTitleIndex(0);
@@ -528,6 +556,7 @@ export const RenderingMessage = memo(function RenderingMessage({ mode, completed
             ? `已生成 ${completedImageCount}/${requestedImageCount} 张，正在补齐剩余图片…`
             : titles[titleIndex] ?? titles[0]}
       </span>
+      <small className="rendering-duration">已用时 {formatDurationMs(elapsedMs)}</small>
       {phase !== "persisting" ? (
         <div ref={cardRef} className={`rendering-card rendering-card-variant-${variant}`}>
           <div className="rendering-dot-field" aria-hidden="true">

@@ -640,10 +640,10 @@ export function ImageEditWorkspace({
         width: Math.max(0, Math.round(image.offsetWidth)),
         height: Math.max(0, Math.round(image.offsetHeight))
       });
-      if (activeImageMetadataSize) {
-        setNaturalSize(activeImageMetadataSize);
-      } else if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      if (image.naturalWidth > 0 && image.naturalHeight > 0) {
         setNaturalSize({ width: image.naturalWidth, height: image.naturalHeight });
+      } else if (activeImageMetadataSize) {
+        setNaturalSize(activeImageMetadataSize);
       }
     };
     updateSize();
@@ -1126,7 +1126,11 @@ export function ImageEditWorkspace({
                 style={originalSizeImageStyle}
                 onLoad={(event) => {
                   const target = event.currentTarget;
-                  setNaturalSize(activeImageMetadataSize ?? { width: target.naturalWidth, height: target.naturalHeight });
+                  setNaturalSize(
+                    target.naturalWidth > 0 && target.naturalHeight > 0
+                      ? { width: target.naturalWidth, height: target.naturalHeight }
+                      : activeImageMetadataSize ?? { width: 0, height: 0 }
+                  );
                   setDisplaySize({ width: Math.round(target.offsetWidth), height: Math.round(target.offsetHeight) });
                 }}
               />

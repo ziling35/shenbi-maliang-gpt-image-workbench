@@ -8,6 +8,15 @@ import { readStoredFile, secureImagePath, secureImageReferencePath, writeEncrypt
 import type { ImageReferenceSourceAsset, ProviderImageContext, ProviderRow, SavedImageFile } from "./types";
 import { makeId, now } from "./utils";
 
+const IMAGE_BACKGROUND_WORK_DELAY_MS = 3_000;
+
+function warmImageDerivativesLater(imageId: string, path: string) {
+  const timer = setTimeout(() => {
+    void warmImageDerivatives("image", imageId, path);
+  }, IMAGE_BACKGROUND_WORK_DELAY_MS);
+  timer.unref?.();
+}
+
 export type ImageReferenceSnapshotInput = {
   sourceType?: "image" | "asset" | "case" | "message-source-reference" | null;
   sourceId?: string | null;
@@ -125,7 +134,7 @@ async function saveBase64Image(base64: string, imageId: string, userId: string, 
   const dimensions = readImageDimensions(buffer);
   const relativePath = secureImagePath(userId, sessionId, imageId);
   await writeEncryptedFile(relativePath, buffer);
-  void warmImageDerivatives("image", imageId, relativePath);
+  warmImageDerivativesLater(imageId, relativePath);
   return { path: relativePath, mimeType, fileSize: buffer.length, ...dimensions };
 }
 
@@ -324,7 +333,7 @@ async function saveImageUrl(provider: ProviderRow, imageUrl: string, imageId: st
   const mimeType = response.headers.get("content-type") || "image/png";
   const relativePath = secureImagePath(userId, sessionId, imageId);
   await writeEncryptedFile(relativePath, buffer);
-  void warmImageDerivatives("image", imageId, relativePath);
+  warmImageDerivativesLater(imageId, relativePath);
   return { path: relativePath, mimeType, fileSize: buffer.length, ...readImageDimensions(buffer) };
 }
 

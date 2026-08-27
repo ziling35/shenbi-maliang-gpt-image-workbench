@@ -10,6 +10,7 @@ import { listTtsVoices, synthesizeSpeech, ttsStatus } from "./lib/tts.js";
 import { createConfigStore } from "./lib/configStore.js";
 import { createDouyinBridge } from "./lib/douyinBridge.js";
 import { createRequestLogger } from "./lib/requestLog.js";
+import { sanitizeLiveText } from "./lib/liveText.js";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 loadEnv(root);
@@ -115,6 +116,9 @@ function broadcast(eventName, payload) {
 function addEvent(input) {
   const normalized = normalizeDouyinEvent(input);
   if (!normalized) return null;
+  normalized.user = sanitizeLiveText(normalized.user);
+  normalized.text = sanitizeLiveText(normalized.text);
+  normalized.rawText = sanitizeLiveText(normalized.rawText);
   if (duplicateEvent(normalized)) { logRequest({ type: "event.duplicate", message: "忽略重复直播事件", details: { eventType: normalized.type, user: normalized.user, text: normalized.rawText || normalized.text } }); return null; }
   const item = { id: crypto.randomUUID(), ...normalized };
   events.push(item);
@@ -165,7 +169,7 @@ async function maybeGenerateReply(event) {
     const timer = timedRequest("ai.reply", { user: event.user, text: event.rawText || event.text });
     const text = await generateDirectorText({ kind: "回答直播间观众问题", user: event.user, text: event.rawText || event.text, scene: "正在展示灵图AI的图片创作功能", recent: events.filter(item => item.type === "chat").slice(-5) });
     timer.finish({ ok: Boolean(text), provider: aiStatus().provider, model: aiStatus().model, message: text ? "弹幕回复已生成" : "模型未返回内容" });
-    if (text) { broadcast("director", { id: crypto.randomUUID(), kind: "reply", user: event.user, text, at: Date.now() }); aiReplyCompleted.set(eventFingerprint(event), Date.now() + 120000); }
+    if (text) { const safeText = sanitizeLiveText(text); broadcast("director", { id: crypto.randomUUID(), kind: "reply", user: sanitizeLiveText(event.user), text: safeText, at: Date.now() }); aiReplyCompleted.set(eventFingerprint(event), Date.now() + 120000); }
   } catch (error) {
     logRequest({ type: "ai.reply", ok: false, provider: aiStatus().provider, model: aiStatus().model, error: error?.message || error, details: { user: event.user, text: event.rawText || event.text } });
     console.warn("AI 弹幕回复生成失败", error?.message || error);
@@ -187,7 +191,7 @@ function maybeGenerateWelcome(event) {
   if (now - lastAiWelcomeAt < cooldownMs("AI_WELCOME_COOLDOWN_MS", 12000, 5000)) return;
   aiWelcomedUsers.add(event.user);
   lastAiWelcomeAt = now;
-  const text = welcomeText(event.user);
+  const text = sanitizeLiveText(welcomeText(event.user));
   logRequest({ type: "welcome.template", ok: true, message: "本地欢迎语已生成", details: { user: event.user } });
   broadcast("director", { id: crypto.randomUUID(), kind: "welcome", user: event.user, text, at: now });
 }
@@ -222,7 +226,7 @@ function adminAuthorized(req) {
 async function testAdminService(body) {
   const service = String(body.service || "");
   if (service === "tts") {
-    const result = await synthesizeSpeech(body.text || "灵图AI语音配置测试。", body.provider);
+    const result = await synthesizeSpeech(sanitizeLiveText(body.text || "灵图AI语音配置测试。"), body.provider);
     return { ok: true, service, provider: result.provider, browser: Boolean(result.browser), bytes: result.buffer?.length || 0 };
   }
   if (service === "ai") {
@@ -305,7 +309,7 @@ const server = http.createServer(async (req, res) => {
     try {
       body = await readBody(req);
       const timer = timedRequest("tts.preview", { provider: body.provider, text: body.text });
-      const result = await synthesizeSpeech(body.text || "灵图AI语音配置测试，欢迎来到直播间。", body.provider);
+      const result = await synthesizeSpeech(sanitizeLiveText(body.text || "灵图AI语音配置测试，欢迎来到直播间。"), body.provider);
       timer.finish({ provider: result.provider, ok: !result.browser, message: result.browser ? "浏览器语音无需服务端合成" : "试听音频已生成" });
       if (result.browser) return json(res, 400, { error: "浏览器语音请在直播页试听" });
       return audio(res, result);
@@ -371,7 +375,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const timer = timedRequest("tts.synthesize", { provider: body.provider, textLength: String(body.text || "").length });
-      const result = await synthesizeSpeech(body.text, body.provider);
+      const result = await synthesizeSpeech(sanitizeLiveText(body.text), body.provider);
       timer.finish({ provider: result.provider, ok: !result.browser, message: result.browser ? "浏览器语音回退" : "音频已生成" });
       if (result.browser) return json(res, 200, { browser: true, provider: result.provider });
       return audio(res, result);
@@ -387,8 +391,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const text = await generateDirectorText({ kind: body.kind || "生成直播讲解", user: body.user, text: body.text, scene: body.scene, recent: events.filter(item => item.type === "chat").slice(-5) });
       if (!text) return json(res, 503, { error: "大模型尚未配置" });
-      if (body.broadcast !== false) broadcast("director", { id: crypto.randomUUID(), kind: body.kind || "narration", user: body.user || "", text, at: Date.now() });
-      return json(res, 200, { ok: true, text });
+      const safeText = sanitizeLiveText(text); if (body.broadcast !== false) broadcast("director", { id: crypto.randomUUID(), kind: body.kind || "narration", user: sanitizeLiveText(body.user || ""), text: safeText, at: Date.now() });
+      return json(res, 200, { ok: true, text: text ? sanitizeLiveText(text) : text });
     } catch (error) {
       console.warn("AI 导播文案生成失败", error?.message || error);
       return json(res, 502, { error: error?.message || "大模型调用失败" });
@@ -411,7 +415,7 @@ const server = http.createServer(async (req, res) => {
       }));
       const text = result.text;
       timer.finish({ ok: Boolean(text), provider: aiStatus().provider, model: aiStatus().model, message: text ? "场景讲稿已生成" : "模型未返回内容", details: { queueWaitMs: result.queueWaitMs } });
-      return json(res, 200, { ok: true, text });
+      return json(res, 200, { ok: true, text: text ? sanitizeLiveText(text) : text });
     } catch (error) {
       logRequest({ type: "ai.scene", ok: false, provider: aiStatus().provider, model: aiStatus().model, error: error?.message || error });
       console.warn("AI 场景讲解生成失败", error?.message || error);
@@ -443,7 +447,7 @@ const server = http.createServer(async (req, res) => {
       const text = await generateDirectorText({ kind: instructions, scene, recent: events.filter(item => item.type === "chat").slice(-5) });
       if (!text) return json(res, 200, { ok: true, text: null, fallback: true });
       logRequest({ type: "ai.live-state", ok: true, provider: aiStatus().provider, model: aiStatus().model, details: { phase, completed, expected } });
-      return json(res, 200, { ok: true, text });
+      return json(res, 200, { ok: true, text: sanitizeLiveText(text) });
     } catch (error) {
       logRequest({ type: "ai.live-state", ok: false, provider: aiStatus().provider, model: aiStatus().model, error: error?.message || error });
       return json(res, 502, { error: error?.message || "实机讲解生成失败" });

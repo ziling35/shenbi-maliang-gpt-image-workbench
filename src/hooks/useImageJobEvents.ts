@@ -11,6 +11,7 @@ export type ImageJobEventPayload = {
   error?: string | null;
   completedImageCount?: number;
   requestedImageCount?: number;
+  durationMs?: number;
   phase?: "generating" | "persisting" | "supplementing";
   imageMessage?: Message;
   updatedAt: string;
@@ -68,6 +69,7 @@ function isImageJobEventPayload(value: unknown): value is ImageJobEventPayload {
     && typeof record.updatedAt === "string"
     && (record.completedImageCount === undefined || typeof record.completedImageCount === "number")
     && (record.requestedImageCount === undefined || typeof record.requestedImageCount === "number")
+    && (record.durationMs === undefined || typeof record.durationMs === "number")
     && (record.imageMessage === undefined || (
       Boolean(record.imageMessage)
       && typeof record.imageMessage === "object"

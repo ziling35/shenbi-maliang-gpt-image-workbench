@@ -1206,6 +1206,7 @@ export type ImageJob = {
   resultImageId: string | null;
   completedImageCount?: number;
   requestedImageCount?: number;
+  durationMs?: number;
   phase?: "generating" | "persisting" | "supplementing";
   clientRequestId?: string;
   branchId?: string;

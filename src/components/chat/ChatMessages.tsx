@@ -94,6 +94,14 @@ function pendingImagePreviewUrl(message: Message) {
   return message.metadata?.pendingImage === true ? message.imageOriginalUrl ?? message.imageUrl ?? "" : "";
 }
 
+function formatGenerationDuration(durationMs: unknown) {
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs < 0) return "";
+  const totalSeconds = Math.floor(durationMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+}
+
 function messageDisplayUrls(message: Message, thumbnail: boolean) {
   const urls = thumbnail
     ? [messageThumbnailUrl(message), message.imagePreviewUrl, message.imageOriginalUrl, message.imageUrl]
@@ -201,7 +209,7 @@ function messageTimeLabel(value: string, locale: string, t: (key: string, params
   return t("chatMessages.dateTime", { date: dateText, time });
 }
 
-function MessageMoreButton({ createdAt }: { createdAt: string }) {
+function MessageMoreButton({ createdAt, generationDuration }: { createdAt: string; generationDuration?: string }) {
   const { resolvedLanguage, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [cardStyle, setCardStyle] = useState<CSSProperties>({});
@@ -291,6 +299,7 @@ function MessageMoreButton({ createdAt }: { createdAt: string }) {
               onClick={(event) => event.stopPropagation()}
             >
               <time dateTime={createdAt || undefined}>{messageTimeLabel(createdAt, resolvedLanguage, t)}</time>
+              {generationDuration ? <div className="message-more-duration">生成耗时 {generationDuration}</div> : null}
             </div>,
             document.body
           )
@@ -377,11 +386,15 @@ function ProgressiveMessageImage({
   useEffect(() => {
     setSourceUrl((current) => {
       if (current && displayUrls.includes(current)) return current;
+      if (current && displayUrls[0]) {
+        preloadAndSwapSource(displayUrls[0]);
+        return current;
+      }
       setLoaded(false);
       setFailed(false);
       return displayUrls[0] ?? "";
     });
-  }, [displayUrlsKey]);
+  }, [displayUrlsKey, preloadAndSwapSource]);
 
   useEffect(() => {
     if (!streamingUrl || typeof window === "undefined") return;
@@ -577,7 +590,7 @@ export function ChatMessageThread({
   failedJobIds?: ReadonlySet<string>;
   retryingJobId?: string;
   onRetryJob?: (jobId: string) => void;
-  onSubmitEdit?: (payload: { rootId: string; userMessage: Message; assistantMessage: Message | null; prompt: string }) => void;
+  onSubmitEdit?: (payload: { rootId: string; userMessage: Message; assistantMessage: Message | null; prompt: string; sourceReferences?: MessageSourceReferenceImage[] }) => void;
   mode?: ChatMessageMode;
   capabilities?: Partial<ChatMessageCapabilities>;
   sharedToken?: string;
@@ -587,6 +600,7 @@ export function ChatMessageThread({
   const [activeIndex, setActiveIndex] = useState(Math.max(0, versions.length - 1));
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
+  const [editReferences, setEditReferences] = useState<MessageSourceReferenceImage[]>([]);
   const [previewState, setPreviewState] = useState<ImageLightboxState | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const { showToast } = useToast();
@@ -641,13 +655,14 @@ export function ChatMessageThread({
   };
   const startEditing = () => {
     setEditValue(revision.user.content);
+    setEditReferences(sourceSnapshotFromMessage(revision.user).references);
     setEditing(true);
   };
   const submitEdit = () => {
     const prompt = editValue.trim();
-    if (!prompt || isSubmitting) return;
+    if (!prompt) return;
     setEditing(false);
-    onSubmitEdit?.({ rootId, userMessage: revision.user, assistantMessage: revision.assistant, prompt });
+    onSubmitEdit?.({ rootId, userMessage: revision.user, assistantMessage: revision.assistant, prompt, sourceReferences: editReferences });
   };
   const assistantMessages = revision.assistants.length > 0 ? revision.assistants : revision.assistant ? [revision.assistant] : [];
   const assistantImageMessages = assistantMessages.filter((message) => message.imageUrl && message.imageId);
@@ -657,7 +672,7 @@ export function ChatMessageThread({
   const canRetry = Boolean(capabilities.retry && revisionJobId && failedJobIds?.has(revisionJobId) && onRetryJob);
   const retrying = Boolean(revisionJobId && retryingJobId === revisionJobId);
   const editSourceSnapshot = sourceSnapshotFromMessage(revision.user);
-  const editPreviewItems = editSourceSnapshot.references.map((reference) => ({
+  const editPreviewItems = editReferences.map((reference) => ({
     url: reference.previewUrl ?? reference.url,
     thumbnailUrl: reference.thumbnailUrl ?? reference.previewUrl ?? reference.url,
     name: reference.name
@@ -674,19 +689,32 @@ export function ChatMessageThread({
               submitEdit();
             }}
           >
-            {editSourceSnapshot.references.length > 0 ? (
+            {editReferences.length > 0 ? (
               <div className="message-edit-preview-row" aria-label={t("chatMessages.originalMaterials")}>
-                {editSourceSnapshot.references.map((reference, index) => (
-                  <button
-                    key={`${reference.kind}-${reference.id}-${reference.url}`}
-                    type="button"
-                    className="message-edit-preview-card"
-                    title={reference.name}
-                    onClick={() => setPreviewState({ items: editPreviewItems, index })}
-                    aria-label={t("composer.previewNamed", { name: reference.name })}
-                  >
-                    <CheckerboardImage src={reference.thumbnailUrl ?? reference.previewUrl ?? reference.url} alt={reference.name} />
-                  </button>
+                {editReferences.map((reference, index) => (
+                  <span key={`${reference.kind}-${reference.id}-${reference.url}`} className="message-edit-preview-card-wrap">
+                    <button
+                      type="button"
+                      className="message-edit-preview-card"
+                      title={reference.name}
+                      onClick={() => setPreviewState({ items: editPreviewItems, index })}
+                      aria-label={t("composer.previewNamed", { name: reference.name })}
+                    >
+                      <CheckerboardImage src={reference.thumbnailUrl ?? reference.previewUrl ?? reference.url} alt={reference.name} />
+                    </button>
+                    <button
+                      type="button"
+                      className="message-edit-preview-remove"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setEditReferences((current) => current.filter((_, currentIndex) => currentIndex !== index));
+                      }}
+                      aria-label={`删除${reference.name}`}
+                      title={`删除${reference.name}`}
+                    >
+                      ×
+                    </button>
+                  </span>
                 ))}
               </div>
             ) : null}
@@ -695,7 +723,7 @@ export function ChatMessageThread({
               <button type="button" onClick={() => setEditing(false)}>
                 {t("common.cancel")}
               </button>
-              <button type="submit" disabled={isSubmitting || !editValue.trim()}>
+              <button type="submit" disabled={!editValue.trim()}>
                 {t("composer.send")}
               </button>
             </div>
@@ -720,7 +748,7 @@ export function ChatMessageThread({
               </button>
             ) : null}
             {capabilities.editMessage && onSubmitEdit ? (
-              <button type="button" onClick={startEditing} disabled={isSubmitting} aria-label={t("chatMessages.editMessage")} title={t("chatMessages.editMessage")}>
+              <button type="button" onClick={startEditing} aria-label={t("chatMessages.editMessage")} title={t("chatMessages.editMessage")}>
                 <MessageEditIcon size={16} />
               </button>
             ) : null}
@@ -1108,6 +1136,7 @@ export function ChatMessage({
   const { showToast } = useToast();
   const { t } = useI18n();
   const image = workImageFromMessage(message);
+  const generationDuration = formatGenerationDuration(message.metadata?.generationDurationMs);
   const capabilities = resolveChatMessageCapabilities(mode, capabilityOverrides);
   const canOpenEditor = capabilities.editImage && Boolean(image && onOpenEditor);
   const hideReference = message.metadata?.hideReference === true;
@@ -1390,7 +1419,7 @@ export function ChatMessage({
                 {copyingImage ? <RefreshCw size={17} className="spin" /> : <Copy size={17} />}
               </button>
             ) : null}
-            <MessageMoreButton createdAt={message.createdAt} />
+            <MessageMoreButton createdAt={message.createdAt} generationDuration={generationDuration} />
           </div>
         </>
       ) : null}

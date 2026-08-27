@@ -1409,6 +1409,7 @@ export function WorkbenchShell({ user }: { user: User }) {
           error: payload.error !== undefined ? payload.error : job.error,
           completedImageCount: payload.completedImageCount !== undefined ? payload.completedImageCount : job.completedImageCount,
           requestedImageCount: payload.requestedImageCount !== undefined ? payload.requestedImageCount : job.requestedImageCount,
+          durationMs: payload.durationMs !== undefined ? payload.durationMs : job.durationMs,
           phase: payload.phase !== undefined ? payload.phase : job.phase,
           updatedAt: payload.updatedAt
         };
@@ -1458,28 +1459,7 @@ export function WorkbenchShell({ user }: { user: User }) {
         const pendingMessageIndex = pendingPreviewId
           ? current.messages.findIndex((message) => message.id === pendingPreviewId)
           : -1;
-        const pendingMessage = pendingMessageIndex >= 0 ? current.messages[pendingMessageIndex] : null;
-        const pendingPreviewUrl = pendingMessage?.imageOriginalUrl?.trim()
-          || pendingMessage?.imageUrl?.trim()
-          || (typeof incomingImageMessage.metadata?.pendingPreviewUrl === "string"
-            ? incomingImageMessage.metadata.pendingPreviewUrl.trim()
-            : "");
-        const pendingFallbackUrl = typeof pendingMessage?.metadata?.pendingFallbackUrl === "string"
-          ? pendingMessage.metadata.pendingFallbackUrl.trim()
-          : typeof incomingImageMessage.metadata?.pendingFallbackUrl === "string"
-            ? incomingImageMessage.metadata.pendingFallbackUrl.trim()
-            : "";
-        const imageMessage = pendingMessage && incomingImageMessage.metadata?.pendingImage !== true
-          ? {
-              ...incomingImageMessage,
-              metadata: {
-                ...incomingImageMessage.metadata,
-                ...(pendingPreviewUrl ? { pendingPreviewUrl } : {}),
-                ...(pendingFallbackUrl ? { pendingFallbackUrl } : {}),
-                pendingPreviewActive: true
-              }
-            }
-          : incomingImageMessage;
+        const imageMessage = incomingImageMessage;
         if (pendingMessageIndex >= 0 && imageMessage.metadata?.pendingImage !== true) {
           appendedImageMessage = true;
           const messages = [...current.messages];

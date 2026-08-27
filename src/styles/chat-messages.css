@@ -551,6 +551,13 @@
   -webkit-backdrop-filter: blur(18px) saturate(1.12);
 }
 
+.message-more-duration {
+  margin-top: 8px;
+  color: #9ca3af;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .message-more-card time {
   display: block;
   color: inherit;
@@ -581,6 +588,13 @@
   gap: 8px;
 }
 
+.message-edit-preview-card-wrap {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  display: block;
+}
+
 .message-edit-preview-card {
   width: 54px;
   height: 54px;
@@ -591,6 +605,29 @@
   background: #f3f4f6;
   padding: 0;
   cursor: pointer;
+}
+
+.message-edit-preview-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #fff;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.message-edit-preview-remove:hover {
+  background: #dc2626;
 }
 
 .message-edit-preview-card img {

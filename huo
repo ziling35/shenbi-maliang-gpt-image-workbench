@@ -1,0 +1,37 @@
+获取最新的上游返回的图片url
+docker compose exec -T maliang bun -e 'import {Database} from "bun:sqlite";const db=new Database(process.env.GPT_IMAGE_APP_DB_PATH||"/app/data/app.db",{readonly:true});const row=db.query("select response_json from image_jobs where response_json is not null and response_json like ? order by created_at desc limit 1").get("%http%");const urls=String(row?.response_json||"").match(/https?:\/\/[^\"\\\\]+/g)||[];console.log(urls[0]||"");'
+
+
+
+
+
+img2.yunfei.best
+https://oss6.cxkedu.shop/images/2026/08/17/1786977328_d1af9c8a1aa6c4c4dff4d3f80cf56776.png
+
+
+容器内访问
+docker compose exec -T -e TEST_URL="https://oss6.cxkedu.shop/images/2026/08/17/1786977328_d1af9c8a1aa6c4c4dff4d3f80cf56776.png" maliang bun -e 'const started=performance.now();const response=await fetch(process.env.TEST_URL);const headersAt=performance.now();const buffer=await response.arrayBuffer();const ended=performance.now();const totalMs=Math.round(ended-started);const bytes=buffer.byteLength;const speed=totalMs?Math.round(bytes*1000/totalMs):bytes;console.log({status:response.status,bytes,firstByteMs:Math.round(headersAt-started),bodyDownloadMs:Math.round(ended-headersAt),totalMs,speedBytesPerSecond:speed,speedMbps:Number((speed*8/1024/1024).toFixed(2))});'
+
+容器外访问
+curl -4 -L -o /dev/null \
+  --connect-timeout 15 \
+  --max-time 600 \
+  -w '%{http_code} %{remote_ip} %{size_download} %{time_namelookup} %{time_connect} %{time_appconnect} %{time_starttransfer} %{time_total} %{speed_download}\n' \
+"https://oss6.cxkedu.shop/images/2026/08/17/1786977328_d1af9c8a1aa6c4c4dff4d3f80cf56776.png" |
+awk '{
+  printf "HTTP状态: %s\n", $1;
+  printf "远端IP: %s\n", $2;
+  printf "文件大小: %s bytes\n", $3;
+  printf "DNS耗时: %.3f 秒\n", $4;
+  printf "TCP连接: %.3f 秒\n", $5;
+  printf "TLS完成: %.3f 秒\n", $6;
+  printf "首字节: %.3f 秒\n", $7;
+  printf "内容传输: %.3f 秒\n", $8-$7;
+  printf "总耗时: %.3f 秒\n", $8;
+  printf "平均速度: %.2f KB/s\n", $9/1024;
+  printf "平均带宽: %.2f Mbps\n", $9*8/1024/1024;
+}'
+
+
+
+

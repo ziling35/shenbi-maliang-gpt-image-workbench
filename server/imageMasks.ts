@@ -27,8 +27,36 @@ function maskExtension(mimeType: string) {
 }
 
 export async function normalizeImageEditMaskDataUrl(dataUrl: string) {
+  return normalizeImageEditMaskDataUrlToDimensions(dataUrl);
+}
+
+export async function imageDataUrlDimensions(dataUrl: string) {
   const { buffer } = dataUrlToBuffer(dataUrl);
-  const { data, info } = await sharp(buffer, { limitInputPixels: SAFE_IMAGE_MAX_PIXELS, sequentialRead: true })
+  const metadata = await sharp(buffer, { limitInputPixels: SAFE_IMAGE_MAX_PIXELS, sequentialRead: true }).metadata();
+  return {
+    width: Number.isFinite(metadata.width) ? Number(metadata.width) : 0,
+    height: Number.isFinite(metadata.height) ? Number(metadata.height) : 0
+  };
+}
+
+export async function normalizeImageEditMaskDataUrlToDimensions(
+  dataUrl: string,
+  target?: { width: number; height: number }
+) {
+  const { buffer } = dataUrlToBuffer(dataUrl);
+  const sourceMetadata = await sharp(buffer, { limitInputPixels: SAFE_IMAGE_MAX_PIXELS, sequentialRead: true }).metadata();
+  const targetWidth = Math.max(0, Math.trunc(target?.width ?? 0));
+  const targetHeight = Math.max(0, Math.trunc(target?.height ?? 0));
+  const needsResize = targetWidth > 0
+    && targetHeight > 0
+    && (sourceMetadata.width !== targetWidth || sourceMetadata.height !== targetHeight);
+  const normalizedInput = needsResize
+    ? await sharp(buffer, { limitInputPixels: SAFE_IMAGE_MAX_PIXELS, sequentialRead: true })
+        .resize({ width: targetWidth, height: targetHeight, fit: "fill", kernel: sharp.kernel.nearest })
+        .png()
+        .toBuffer()
+    : buffer;
+  const { data, info } = await sharp(normalizedInput, { limitInputPixels: SAFE_IMAGE_MAX_PIXELS, sequentialRead: true })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });

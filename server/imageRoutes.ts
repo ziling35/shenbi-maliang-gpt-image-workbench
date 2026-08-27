@@ -32,7 +32,7 @@ import {
   type PreparedImageEditSuggestions
 } from "./imageEditSuggestions";
 import { saveImageEditMaskDebugArtifacts } from "./imageEditDebug";
-import { imageEditMaskSnapshotDataUrl, normalizeImageEditMaskDataUrl, saveImageEditMaskSnapshot } from "./imageMasks";
+import { imageDataUrlDimensions, imageEditMaskSnapshotDataUrl, normalizeImageEditMaskDataUrlToDimensions, saveImageEditMaskSnapshot } from "./imageMasks";
 import { readImageDimensions } from "./imageDimensions";
 import {
   messageSourceReferencesByIds,
@@ -167,7 +167,7 @@ function emitJobStatus(
   jobId: string,
   status: ImageJobEventStatus,
   type?: string,
-  details: { resultImageId?: string | null; error?: string | null; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "persisting" | "supplementing"; imageMessage?: Record<string, unknown> } = {}
+  details: { resultImageId?: string | null; error?: string | null; completedImageCount?: number; requestedImageCount?: number; phase?: "generating" | "persisting" | "supplementing"; durationMs?: number; imageMessage?: Record<string, unknown> } = {}
 ) {
   const normalizedSessionId = String(sessionId ?? "").trim();
   if (!normalizedSessionId) return;
@@ -189,9 +189,23 @@ function emitJobStatus(
     ...(details.completedImageCount !== undefined ? { completedImageCount: details.completedImageCount } : {}),
     ...(details.requestedImageCount !== undefined ? { requestedImageCount: details.requestedImageCount } : {}),
     ...(details.phase !== undefined ? { phase: details.phase } : {}),
+    ...(details.durationMs !== undefined ? { durationMs: details.durationMs } : {}),
     ...(details.imageMessage ? { imageMessage: details.imageMessage } : {}),
     updatedAt: eventTimestamp
   });
+}
+
+function imageJobDurationMs(createdAt: string) {
+  const startedAt = Date.parse(createdAt);
+  return Number.isFinite(startedAt) ? Math.max(0, Date.now() - startedAt) : 0;
+}
+
+function imageMessageWithDuration(message: Record<string, unknown> | null, durationMs: number) {
+  if (!message) return undefined;
+  const metadata = message.metadata && typeof message.metadata === "object"
+    ? message.metadata as Record<string, unknown>
+    : {};
+  return { ...message, metadata: { ...metadata, generationDurationMs: durationMs } };
 }
 
 async function applyImageFieldSuggestions(imageIds: string[], prompt?: string) {
@@ -1548,11 +1562,12 @@ async function runStoredImageJob({
         1,
         createdAt
       );
-      try {
-        await snapshotImageReferences(job.user_id, retrySessionId, saved.id, imageReferenceSources);
-      } catch (error) {
-        console.warn("图片素材引用快照保存失败", error);
-      }
+      const snapshotTimer = setTimeout(() => {
+        void snapshotImageReferences(job.user_id, retrySessionId, saved.id, imageReferenceSources).catch((error) => {
+          console.warn("图片素材引用快照保存失败", error);
+        });
+      }, 3_000);
+      snapshotTimer.unref?.();
       assertImageJobExecutionIsActive(job.id, nextManualRetryCount, expectedRecoveryCount);
       savedImageIds.push(saved.id);
       insertMessage(job.user_id, retrySessionId, "assistant", "已完成图片编辑", saved.id, {
@@ -1586,8 +1601,6 @@ async function runStoredImageJob({
       settlePartialImageCharge(job.id, allImageIds.length);
       console.warn(`渠道返回图片数量不足，已按实际结果结算：期望 ${requestedImageCount} 张，实际 ${allImageIds.length} 张`);
     }
-    await applyImageFieldSuggestions(allImageIds);
-    await ensureImageEditSuggestionsForImages(job.user_id, allImageIds, preparedEditSuggestions);
     if (savedImageIds.length > 0) invalidateLibraryFacetCache("images");
     const resultImageId = allImageIds[0] ?? null;
     const completed = run(
@@ -1608,7 +1621,19 @@ async function runStoredImageJob({
       expectedRecoveryCount
     );
     if (Number(completed.changes ?? 0) > 0) {
-      emitJobStatus(job.user_id, retrySessionId, job.id, "succeeded", "edit", { resultImageId });
+      const durationMs = imageJobDurationMs(job.created_at);
+      logImageJobTrace(job.id, "result_ready_for_client", {
+        resultImageId,
+        imageCount: allImageIds.length,
+        durationMs,
+        source: "cos",
+        retry: true
+      });
+      emitJobStatus(job.user_id, retrySessionId, job.id, "succeeded", "edit", { resultImageId, durationMs });
+      void Promise.allSettled([
+        applyImageFieldSuggestions(allImageIds),
+        ensureImageEditSuggestionsForImages(job.user_id, allImageIds, preparedEditSuggestions)
+      ]);
     }
   } catch (error) {
     if (error instanceof ImageJobExecutionSupersededError || providerRequestWasCancelled(error, signal)) return;
@@ -2235,6 +2260,7 @@ api.post("/images/generate", async (c) => {
   const executionController = beginImageJobExecution(jobId);
   const runGenerationJob = async () => {
     const savedImageIds: string[] = [];
+    let lastGeneratedImageMessage: Record<string, unknown> | null = null;
     try {
       const preparedEditSuggestions = prepareImageEditSuggestionsForJob({
         userId: user.id,
@@ -2288,7 +2314,10 @@ api.post("/images/generate", async (c) => {
           };
           run(appDb, "update image_jobs set result_image_id=coalesce(result_image_id,?),updated_at=? where id=? and status='running' and coalesce(manual_retry_count,0)=0 and coalesce(recovery_count,0)=0", saved.id, now(), jobId);
           logImageJobTrace(jobId, "image_record_and_message_persisted", { imageId: saved.id, messageId, path: saved.file.path, bytes: saved.file.fileSize });
-          emitJobStatus(user.id, sessionId, jobId, "running", "generation", { resultImageId: saved.id, completedImageCount, requestedImageCount, phase: supplementing ? "supplementing" : "generating", imageMessage });
+      lastGeneratedImageMessage = imageMessage;
+      if (supplementing || completedImageCount < requestedImageCount) {
+        emitJobStatus(user.id, sessionId, jobId, "running", "generation", { resultImageId: saved.id, completedImageCount, requestedImageCount, phase: supplementing ? "supplementing" : "generating", imageMessage });
+      }
         }
         if (batch.length > 0) invalidateLibraryFacetCache("images");
       };
@@ -2381,8 +2410,10 @@ api.post("/images/generate", async (c) => {
         "running"
       );
       if (Number(completed.changes ?? 0) > 0) {
+        const durationMs = imageJobDurationMs(timestamp);
         logImageJobTrace(jobId, "job_succeeded_persisted", { resultImageId: savedImageIds[0] ?? null, imageCount: savedImageIds.length });
-        emitJobStatus(user.id, sessionId, jobId, "succeeded", "generation", { resultImageId: savedImageIds[0] ?? null });
+        logImageJobTrace(jobId, "result_ready_for_client", { resultImageId: savedImageIds[0] ?? null, imageCount: savedImageIds.length, durationMs, source: "cos" });
+        emitJobStatus(user.id, sessionId, jobId, "succeeded", "generation", { resultImageId: savedImageIds[0] ?? null, completedImageCount: savedImageIds.length, requestedImageCount: imageCount, durationMs, imageMessage: imageMessageWithDuration(lastGeneratedImageMessage, durationMs) });
         void Promise.allSettled([
           applyImageFieldSuggestions(savedImageIds, prompt),
           ensureImageEditSuggestionsForImages(user.id, savedImageIds, preparedEditSuggestions)
@@ -2493,15 +2524,6 @@ api.post("/images/edit", async (c) => {
   if (safetyReview.blocked) {
     return c.json({ error: safetyReview.message || "当前提示词可能存在安全风险，请调整后再试。" }, 400);
   }
-  if (rawMaskDataUrl) {
-    try {
-      maskDataUrl = await normalizeImageEditMaskDataUrl(rawMaskDataUrl);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "遮罩图片处理失败";
-      return c.json({ error: message }, 400);
-    }
-  }
-
   const selectedProviderId = providerSelectionId(body.providerId);
   let providers: ReturnType<typeof providerChainById>;
   try {
@@ -2559,6 +2581,17 @@ api.post("/images/edit", async (c) => {
     if (sourceMessage?.image_id) {
       const sourceImage = getOne<ImageRow>(appDb, "select * from images where id=? and user_id=?", sourceMessage.image_id, user.id);
       if (sourceImage) imageUrls.push(await fileToDataUrl(sourceImage.path, sourceImage.mime_type));
+    }
+  }
+  if (rawMaskDataUrl) {
+    try {
+      const sourceDimensions = imageUrls[0]
+        ? await imageDataUrlDimensions(imageUrls[0]).catch(() => ({ width: 0, height: 0 }))
+        : { width: 0, height: 0 };
+      maskDataUrl = await normalizeImageEditMaskDataUrlToDimensions(rawMaskDataUrl, sourceDimensions);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "遮罩图片处理失败";
+      return c.json({ error: message }, 400);
     }
   }
   if (imageJobCancelRequested(user.id, clientRequestId)) {
@@ -2805,6 +2838,7 @@ api.post("/images/edit", async (c) => {
     await assertImageJobExecutionIsActiveAfterSave(jobId, 0, 0, savedImages);
     const autoRetryCount = Math.max(0, result.attemptNo - 1);
     const generatedByRetry = autoRetryCount > 0 ? 1 : 0;
+    let lastSerializedImageMessage: Record<string, unknown> | null = null;
     for (const [index, saved] of savedImages.entries()) {
       assertImageJobExecutionIsActive(jobId, 0, 0);
       const createdAt = now();
@@ -2836,11 +2870,6 @@ api.post("/images/edit", async (c) => {
         generatedByRetry,
         createdAt
       );
-      try {
-        await snapshotImageReferences(user.id, sessionId, saved.id, imageReferenceSources);
-      } catch (error) {
-        console.warn("图片素材引用快照保存失败", error);
-      }
       assertImageJobExecutionIsActive(jobId, 0, 0);
       const messageMetadata = {
         mode: "edit",
@@ -2875,13 +2904,22 @@ api.post("/images/edit", async (c) => {
         parent_image_id: primarySourceImage?.id ?? null,
         image_origin_prompt: prompt
       });
-      emitJobStatus(user.id, sessionId, jobId, "running", "edit", {
-        resultImageId: saved.id,
-        completedImageCount: index + 1,
-        requestedImageCount: imageCount,
-        phase: index + 1 < imageCount ? "supplementing" : "generating",
-        imageMessage: { ...serializedImageMessage, referenceImages: [] }
-      });
+      lastSerializedImageMessage = { ...serializedImageMessage, referenceImages: [] };
+      if (index + 1 < savedImages.length) {
+        emitJobStatus(user.id, sessionId, jobId, "running", "edit", {
+          resultImageId: saved.id,
+          completedImageCount: index + 1,
+          requestedImageCount: imageCount,
+          phase: "supplementing",
+          imageMessage: lastSerializedImageMessage
+        });
+      }
+      const snapshotTimer = setTimeout(() => {
+        void snapshotImageReferences(user.id, sessionId, saved.id, imageReferenceSources).catch((error) => {
+          console.warn("图片素材引用快照保存失败", error);
+        });
+      }, 3_000);
+      snapshotTimer.unref?.();
     }
     const savedImageIds = savedImages.map((image) => image.id);
     if (savedImageIds.length > 0) invalidateLibraryFacetCache("images");
@@ -2907,7 +2945,20 @@ api.post("/images/edit", async (c) => {
       "running"
     );
     if (Number(completed.changes ?? 0) > 0) {
-      emitJobStatus(user.id, sessionId, jobId, "succeeded", "edit", { resultImageId });
+      const durationMs = imageJobDurationMs(timestamp);
+      logImageJobTrace(jobId, "result_ready_for_client", {
+        resultImageId,
+        imageCount: savedImageIds.length,
+        durationMs,
+        source: "cos"
+      });
+      emitJobStatus(user.id, sessionId, jobId, "succeeded", "edit", {
+        resultImageId,
+        completedImageCount: savedImageIds.length,
+        requestedImageCount: imageCount,
+        durationMs,
+        imageMessage: imageMessageWithDuration(lastSerializedImageMessage, durationMs)
+      });
       void Promise.allSettled([
         applyImageFieldSuggestions(savedImageIds),
         ensureImageEditSuggestionsForImages(user.id, savedImageIds, preparedEditSuggestions)
